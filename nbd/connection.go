@@ -3,6 +3,7 @@ package nbd
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"golang.org/x/net/context"
 	"io"
 	"log"
@@ -39,6 +40,7 @@ type Export struct {
 	size        uint64
 	exportFlags uint16
 	name        string
+	readonly    bool
 }
 
 func newConnection(listener *Listener, logger *log.Logger, conn net.Conn) (*Connection, error) {
@@ -120,7 +122,6 @@ func (c *Connection) Serve(parentCtx context.Context) {
 				c.logger.Printf("[ERROR] Client %s gave bad length or offest", c.conn.RemoteAddr())
 				return
 			}
-			// c.logger.Printf("[DEBUG] Client %s NBD_CMD_READ offset=%d length=%d", c.conn.RemoteAddr(), offset, length)
 			repdata = make([]byte, length, length)
 			n, err := c.backend.ReadAt(ctx, repdata, offset)
 			if err != nil {
@@ -130,43 +131,58 @@ func (c *Connection) Serve(parentCtx context.Context) {
 				c.logger.Printf("[WARN] Client %s got incomplete read (%d != %d) at offset %d", n, length, offset)
 				rep.NbdError = NBD_EIO
 			}
-		case NBD_CMD_WRITE:
+		case NBD_CMD_WRITE, NBD_CMD_WRITE_ZEROES:
 			if length <= 0 || offset < 0 {
 				c.logger.Printf("[ERROR] Client %s gave bad length or offest", c.conn.RemoteAddr())
 				return
 			}
-			// c.logger.Printf("[DEBUG] Client %s NBD_CMD_WRITE offset=%d length=%d", c.conn.RemoteAddr(), offset, length)
 			data := make([]byte, length, length)
-			n, err := io.ReadFull(c.conn, data)
-			if err != nil {
-				c.logger.Printf("[ERROR] Client %s cannot read data to write: %s", c.conn.RemoteAddr(), err)
-				return
-			}
+			if req.NbdCommandType != NBD_CMD_WRITE_ZEROES {
+				n, err := io.ReadFull(c.conn, data)
+				if err != nil {
+					c.logger.Printf("[ERROR] Client %s cannot read data to write: %s", c.conn.RemoteAddr(), err)
+					return
+				}
 
-			if n != len(data) {
-				c.logger.Printf("[ERROR] Client %s cannot read all data to write: %d != %d", c.conn.RemoteAddr(), n, len(data))
-				return
+				if n != len(data) {
+					c.logger.Printf("[ERROR] Client %s cannot read all data to write: %d != %d", c.conn.RemoteAddr(), n, len(data))
+					return
+				}
 			}
-
 			fua := req.NbdCommandFlags&NBD_CMD_FLAG_FUA != 0
-			n, err = c.backend.WriteAt(ctx, data, offset, fua)
-			if err != nil {
-				c.logger.Printf("[WARN] Client %s got write I/O error: %s", c.conn.RemoteAddr(), err)
-				rep.NbdError = NBD_EIO //TODO: work out proper error mapping
-			} else if n != length {
-				c.logger.Printf("[WARN] Client %s got incomplete write (%d != %d) at offset %d", n, length, offset)
-				rep.NbdError = NBD_EIO
+			if c.export.readonly {
+				c.logger.Printf("[WARN] Client %s got write to read-only device", c.conn.RemoteAddr())
+				rep.NbdError = NBD_EPERM
+			} else {
+				n, err := c.backend.WriteAt(ctx, data, offset, fua)
+				if err != nil {
+					c.logger.Printf("[WARN] Client %s got write I/O error: %s", c.conn.RemoteAddr(), err)
+					rep.NbdError = NBD_EIO //TODO: work out proper error mapping
+				} else if n != length {
+					c.logger.Printf("[WARN] Client %s got incomplete write (%d != %d) at offset %d", n, length, offset)
+					rep.NbdError = NBD_EIO
+				}
 			}
 		case NBD_CMD_FLUSH:
-			c.backend.Flush(ctx)
+			if c.export.readonly {
+				c.logger.Printf("[WARN] Client %s got flush to read-only device", c.conn.RemoteAddr())
+				rep.NbdError = NBD_EPERM
+			} else {
+				c.backend.Flush(ctx)
+			}
 		case NBD_CMD_TRIM:
-			n, err := c.backend.TrimAt(ctx, length, offset)
-			if err != nil {
-				c.logger.Printf("[WARN] Client %s got write I/O error: %s", c.conn.RemoteAddr(), err)
-				rep.NbdError = NBD_EIO //TODO: work out proper error mapping
-			} else if n != length {
-				c.logger.Printf("[WARN] Client %s got incomplete write (%d != %d) at offset %d", n, length, offset)
-				rep.NbdError = NBD_EIO
+			if c.export.readonly {
+				c.logger.Printf("[WARN] Client %s got trim to read-only device", c.conn.RemoteAddr())
+				rep.NbdError = NBD_EPERM
+			} else {
+				n, err := c.backend.TrimAt(ctx, length, offset)
+				if err != nil {
+					c.logger.Printf("[WARN] Client %s got write I/O error: %s", c.conn.RemoteAddr(), err)
+					rep.NbdError = NBD_EIO //TODO: work out proper error mapping
+				} else if n != length {
+					c.logger.Printf("[WARN] Client %s got incomplete write (%d != %d) at offset %d", n, length, offset)
+					rep.NbdError = NBD_EIO
+				}
 			}
 		case NBD_CMD_DISC:
 			c.logger.Printf("[INFO] Client %s requested disconnect", c.conn.RemoteAddr())
@@ -279,22 +295,35 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 }
 
 func (c *Connection) getExport(ctx context.Context, name string) (*Export, error) {
-	backend, err := NewFileBackend(ctx, name)
-	if err != nil {
-		return nil, err
+	for _, e := range c.listener.exports {
+		if e.Name == name {
+			var backend Backend
+			var err error
+			switch e.Driver {
+			case "file":
+				backend, err = NewFileBackend(ctx, &e)
+			default:
+				return nil, fmt.Errorf("No such driver %s", e.Driver)
+			}
+			if err != nil {
+				return nil, err
+			}
+			size, err := backend.Size(ctx)
+			if err != nil {
+				backend.Close(ctx)
+				return nil, err
+			}
+			if c.backend != nil {
+				c.backend.Close(ctx)
+			}
+			c.backend = backend
+			return &Export{
+				size:        size,
+				exportFlags: NBD_FLAG_HAS_FLAGS | NBD_FLAG_SEND_FLUSH | NBD_FLAG_SEND_FUA | NBD_FLAG_SEND_WRITE_ZEROES,
+				name:        name,
+				readonly:    e.ReadOnly,
+			}, nil
+		}
 	}
-	size, err := backend.Size(ctx)
-	if err != nil {
-		backend.Close(ctx)
-		return nil, err
-	}
-	if c.backend != nil {
-		c.backend.Close(ctx)
-	}
-	c.backend = backend
-	return &Export{
-		size:        size,
-		exportFlags: NBD_FLAG_HAS_FLAGS | NBD_FLAG_SEND_FLUSH | NBD_FLAG_SEND_FUA,
-		name:        name,
-	}, nil
+	return nil, errors.New("No such export")
 }

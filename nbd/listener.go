@@ -4,67 +4,89 @@ import (
 	"golang.org/x/net/context"
 	"log"
 	"net"
+	"sync"
 	"time"
 )
 
-// A single listener on a given TCP address
+// A single li on a given TCP address
 type Listener struct {
-	logger *log.Logger
-	addr   string
+	logger   *log.Logger
+	protocol string
+	addr     string
+	exports  []ExportConfig
+}
+
+// An listener type that does what we want
+type DeadlineListener interface {
+	SetDeadline(t time.Time) error
+	net.Listener
 }
 
 func (l *Listener) Listen(parentCtx context.Context) {
 
+	var wg sync.WaitGroup
 	ctx, cancelFunc := context.WithCancel(parentCtx)
 
-	defer cancelFunc()
+	addr := l.protocol + ":" + l.addr
 
-	tcp := "tcp"
-	netAddr, err := net.ResolveTCPAddr(tcp, l.addr)
+	defer func() {
+		cancelFunc()
+		wg.Wait()
+	}()
+
+	nli, err := net.Listen(l.protocol, l.addr)
 	if err != nil {
-		l.logger.Printf("[ERROR] Could not resolve address %s", l.addr)
+		l.logger.Printf("[ERROR] Could not listen on address %s", addr)
 		return
-	}
-	listener, err := net.ListenTCP(tcp, netAddr)
-	if err != nil {
-		l.logger.Printf("[ERROR] Could not listen on address %s", netAddr)
 	}
 
 	defer func() {
-		l.logger.Printf("[INFO] Stopping listening on %s", netAddr)
-		listener.Close()
+		l.logger.Printf("[INFO] Stopping listening on %s", addr)
+		nli.Close()
 	}()
 
-	l.logger.Printf("[INFO] Starting listening on %s", netAddr)
+	li, ok := nli.(DeadlineListener)
+	if !ok {
+		l.logger.Printf("[ERROR] Invalid protocol to listen on %s", addr)
+		return
+	}
+
+	l.logger.Printf("[INFO] Starting listening on %s", addr)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-		listener.SetDeadline(time.Now().Add(time.Second))
-		if conn, err := listener.AcceptTCP(); err != nil {
+		li.SetDeadline(time.Now().Add(time.Second))
+		if conn, err := li.Accept(); err != nil {
 			if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
 				continue
 			}
-			l.logger.Printf("[ERROR] Error %s listening on %s", err, netAddr)
+			l.logger.Printf("[ERROR] Error %s listening on %s", err, addr)
 		} else {
-			l.logger.Printf("[INFO] Connect to %s from %s", netAddr, conn.RemoteAddr())
+			l.logger.Printf("[INFO] Connect to %s from %s", addr, conn.RemoteAddr())
 			if connection, err := newConnection(l, l.logger, conn); err != nil {
-				l.logger.Printf("[ERROR] Error %s establishing connection to %s from %s", err, netAddr, conn.RemoteAddr())
+				l.logger.Printf("[ERROR] Error %s establishing connection to %s from %s", err, addr, conn.RemoteAddr())
 				conn.Close()
 			} else {
-				go connection.Serve(ctx)
+				go func() {
+					wg.Add(1)
+					connection.Serve(ctx)
+					wg.Done()
+				}()
 			}
 		}
 	}
 
 }
 
-func NewListener(logger *log.Logger, addr string) (*Listener, error) {
+func NewListener(logger *log.Logger, protocol string, addr string, exports []ExportConfig) (*Listener, error) {
 	l := &Listener{
-		logger: logger,
-		addr:   addr,
+		logger:   logger,
+		protocol: protocol,
+		addr:     addr,
+		exports:  exports,
 	}
 	return l, nil
 }

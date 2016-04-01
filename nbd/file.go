@@ -50,8 +50,12 @@ func (fb *FileBackend) Size(ctx context.Context) (uint64, error) {
 }
 
 // Generate a new file backend
-func NewFileBackend(ctx context.Context, name string) (*FileBackend, error) {
-	file, err := os.OpenFile("/tmp/"+name, os.O_RDWR, 0666)
+func NewFileBackend(ctx context.Context, ec *ExportConfig) (*FileBackend, error) {
+	perms := os.O_RDWR
+	if ec.ReadOnly {
+		perms = os.O_RDONLY
+	}
+	file, err := os.OpenFile(ec.DriverParameters["path"], perms, 0666)
 	if err != nil {
 		return nil, err
 	}

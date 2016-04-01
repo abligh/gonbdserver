@@ -3,33 +3,39 @@ package nbd
 import ()
 
 const (
-	NBD_CMD_READ  = 0
-	NBD_CMD_WRITE = 1
-	NBD_CMD_DISC  = 2
-	NBD_CMD_FLUSH = 3
-	NBD_CMD_TRIM  = 4
+	NBD_CMD_READ         = 0
+	NBD_CMD_WRITE        = 1
+	NBD_CMD_DISC         = 2
+	NBD_CMD_FLUSH        = 3
+	NBD_CMD_TRIM         = 4
+	NBD_CMD_WRITE_ZEROES = 5
 )
 
 const (
 	NBD_CMD_FLAG_FUA = 1 << 0
+	NBD_CMD_MAY_TRIM = 1 << 1
+	NBD_CMD_FLAG_DF  = 1 << 2
 )
 
 const (
-	NBD_FLAG_HAS_FLAGS  = 1 << 0
-	NBD_FLAG_READ_ONLY  = 1 << 1
-	NBD_FLAG_SEND_FLUSH = 1 << 2
-	NBD_FLAG_SEND_FUA   = 1 << 3
-	NBD_FLAG_ROTATIONAL = 1 << 4
-	NBD_FLAG_SEND_TRIM  = 1 << 5
+	NBD_FLAG_HAS_FLAGS         = 1 << 0
+	NBD_FLAG_READ_ONLY         = 1 << 1
+	NBD_FLAG_SEND_FLUSH        = 1 << 2
+	NBD_FLAG_SEND_FUA          = 1 << 3
+	NBD_FLAG_ROTATIONAL        = 1 << 4
+	NBD_FLAG_SEND_TRIM         = 1 << 5
+	NBD_FLAG_SEND_WRITE_ZEROES = 1 << 6
+	NBD_FLAG_SEND_DF           = 1 << 7
 )
 
 const (
-	NBD_MAGIC         = 0x4e42444d41474943
-	NBD_REQUEST_MAGIC = 0x25609513
-	NBD_REPLY_MAGIC   = 0x67446698
-	NBD_CLISERV_MAGIC = 0x00420281861253
-	NBD_OPTS_MAGIC    = 0x49484156454F5054
-	NBD_REP_MAGIC     = 0x3e889045565a9
+	NBD_MAGIC                  = 0x4e42444d41474943
+	NBD_REQUEST_MAGIC          = 0x25609513
+	NBD_REPLY_MAGIC            = 0x67446698
+	NBD_CLISERV_MAGIC          = 0x00420281861253
+	NBD_OPTS_MAGIC             = 0x49484156454F5054
+	NBD_REP_MAGIC              = 0x3e889045565a9
+	NBD_STRUCTURED_REPLY_MAGIC = 0x668e33ef
 )
 
 const (
@@ -37,9 +43,14 @@ const (
 )
 
 const (
-	NBD_OPT_EXPORT_NAME = 1
-	NBD_OPT_ABORT       = 2
-	NBD_OPT_LIST        = 3
+	NBD_OPT_EXPORT_NAME      = 1
+	NBD_OPT_ABORT            = 2
+	NBD_OPT_LIST             = 3
+	NBD_OPT_PEEK_EXPORT      = 4
+	NBD_OPT_STARTTLS         = 5
+	NBD_OPT_SELECT           = 6
+	NBD_OPT_GO               = 7
+	NBD_OPT_STRUCTURED_REPLY = 8
 )
 
 const (
@@ -56,6 +67,18 @@ const (
 )
 
 const (
+	NBD_REPLY_FLAG_DONE = 1 << 0
+)
+
+const (
+	NBD_REPLY_TYPE_NONE         = 0
+	NBD_REPLY_TYPE_ERROR        = 1
+	NBD_REPLY_TYPE_ERROR_OFFSET = 2
+	NBD_REPLY_TYPE_OFFSET_DATA  = 3
+	NBD_REPLY_TYPE_OFFSET_HOLE  = 4
+)
+
+const (
 	NBD_FLAG_FIXED_NEWSTYLE   = 1 << 0
 	NBD_FLAG_NO_ZEROES        = 1 << 1
 	NBD_FLAG_C_FIXED_NEWSTYLE = NBD_FLAG_FIXED_NEWSTYLE
@@ -63,11 +86,12 @@ const (
 )
 
 const (
-	NBD_EPERM  = 1
-	NBD_EIO    = 5
-	NBD_ENOMEM = 12
-	NBD_EINVAL = 22
-	NBD_ENOSPC = 28
+	NBD_EPERM     = 1
+	NBD_EIO       = 5
+	NBD_ENOMEM    = 12
+	NBD_EINVAL    = 22
+	NBD_ENOSPC    = 28
+	NBD_EOVERFLOW = 75
 )
 
 type nbdNewStyleHeader struct {
