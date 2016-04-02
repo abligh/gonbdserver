@@ -22,16 +22,18 @@ type DeadlineListener interface {
 	net.Listener
 }
 
-func (l *Listener) Listen(parentCtx context.Context) {
-
-	var wg sync.WaitGroup
-	ctx, cancelFunc := context.WithCancel(parentCtx)
+func (l *Listener) Listen(parentCtx context.Context, sessionParentCtx context.Context, sessionWaitGroup *sync.WaitGroup) {
 
 	addr := l.protocol + ":" + l.addr
 
+	ctx, cancelFunc := context.WithCancel(parentCtx)
+
+	// I know this isn't a session, but this ensures all listeners have terminated when we terminate the
+	// whole thing
+	sessionWaitGroup.Add(1)
 	defer func() {
 		cancelFunc()
-		wg.Wait()
+		sessionWaitGroup.Done()
 	}()
 
 	nli, err := net.Listen(l.protocol, l.addr)
@@ -71,9 +73,13 @@ func (l *Listener) Listen(parentCtx context.Context) {
 				conn.Close()
 			} else {
 				go func() {
-					wg.Add(1)
+					// do not use our parent ctx as a context, as we don't want it to cancel when
+					// we reload config and cancel this listener
+					ctx, cancelFunc := context.WithCancel(sessionParentCtx)
+					defer cancelFunc()
+					sessionWaitGroup.Add(1)
 					connection.Serve(ctx)
-					wg.Done()
+					sessionWaitGroup.Done()
 				}()
 			}
 		}

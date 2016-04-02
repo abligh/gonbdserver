@@ -71,7 +71,7 @@ func ParseConfig() (*Config, error) {
 	}
 }
 
-func StartServer(parentCtx context.Context, logger *log.Logger, s ServerConfig) {
+func StartServer(parentCtx context.Context, sessionParentCtx context.Context, sessionWaitGroup *sync.WaitGroup, logger *log.Logger, s ServerConfig) {
 	ctx, cancelFunc := context.WithCancel(parentCtx)
 
 	defer func() {
@@ -84,46 +84,60 @@ func StartServer(parentCtx context.Context, logger *log.Logger, s ServerConfig) 
 	if l, err := NewListener(logger, s.Protocol, s.Address, s.Exports); err != nil {
 		logger.Printf("[ERROR] Could not create listener for %s:%s: %v", s.Protocol, s.Address, err)
 	} else {
-		l.Listen(ctx)
+		l.Listen(ctx, sessionParentCtx, sessionWaitGroup)
 	}
 }
 
 func RunConfig() {
 	logger := log.New(os.Stdout, "gonbdserver", log.Lmicroseconds|log.Ldate|log.Lshortfile)
+	var sessionWaitGroup sync.WaitGroup
 	ctx, cancelFunc := context.WithCancel(context.Background())
-	var wg sync.WaitGroup
 	defer func() {
 		logger.Println("[INFO] Shutting down")
 		cancelFunc()
-		wg.Wait()
+		sessionWaitGroup.Wait()
 		logger.Println("[INFO] Shutdown complete")
 	}()
 
 	intr := make(chan os.Signal, 1)
 	term := make(chan os.Signal, 1)
+	hup := make(chan os.Signal, 1)
 	signal.Notify(intr, os.Interrupt)
 	signal.Notify(term, syscall.SIGTERM)
+	signal.Notify(hup, syscall.SIGHUP)
 
-	if c, err := ParseConfig(); err != nil {
-		logger.Println("[ERROR] Cannot parse configuration file: %v", err)
-		return
-	} else {
+	for {
+		var wg sync.WaitGroup
+		configCtx, configCancelFunc := context.WithCancel(ctx)
+		logger.Println("[INFO] Loading configuration")
+		if c, err := ParseConfig(); err != nil {
+			logger.Println("[ERROR] Cannot parse configuration file: %v", err)
+			return
+		} else {
+			for _, s := range c.Servers {
+				s := s // localise loop variable
+				go func() {
+					wg.Add(1)
+					StartServer(configCtx, ctx, &sessionWaitGroup, logger, s)
+					wg.Done()
+				}()
+			}
 
-		for _, s := range c.Servers {
-			s := s // localise loop variable
-			go func() {
-				wg.Add(1)
-				StartServer(ctx, logger, s)
-				wg.Done()
-			}()
-		}
-
-		select {
-		case <-ctx.Done():
-		case <-intr:
-			logger.Println("[INFO] Interrupt signal received")
-		case <-term:
-			logger.Println("[INFO] Terminate signal received")
+			select {
+			case <-ctx.Done():
+				logger.Println("[INFO] Interrupted")
+				return
+			case <-intr:
+				logger.Println("[INFO] Interrupt signal received")
+				return
+			case <-term:
+				logger.Println("[INFO] Terminate signal received")
+				return
+			case <-hup:
+				logger.Println("[INFO] Reload signal received; reloading configuration which will be effective for new connections")
+				configCancelFunc() // kill the listeners but not the sessions
+				wg.Wait()
+			}
 		}
 	}
 }
