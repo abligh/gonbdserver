@@ -2,6 +2,13 @@ package nbd
 
 import ()
 
+/* --- START OF NBD PROTOCOL SECTION --- */
+
+// this section is in essence a transcription of the protocol from
+// NBD's proto.md; note that that file is *not* GPL. For details of
+// what the options mean, see proto.md
+
+// NBD commands
 const (
 	NBD_CMD_READ         = 0
 	NBD_CMD_WRITE        = 1
@@ -11,12 +18,14 @@ const (
 	NBD_CMD_WRITE_ZEROES = 5
 )
 
+// NBD command flags
 const (
 	NBD_CMD_FLAG_FUA = 1 << 0
 	NBD_CMD_MAY_TRIM = 1 << 1
 	NBD_CMD_FLAG_DF  = 1 << 2
 )
 
+// NBD negotiation flags
 const (
 	NBD_FLAG_HAS_FLAGS         = 1 << 0
 	NBD_FLAG_READ_ONLY         = 1 << 1
@@ -28,6 +37,7 @@ const (
 	NBD_FLAG_SEND_DF           = 1 << 7
 )
 
+// NBD magic numbers
 const (
 	NBD_MAGIC                  = 0x4e42444d41474943
 	NBD_REQUEST_MAGIC          = 0x25609513
@@ -38,10 +48,12 @@ const (
 	NBD_STRUCTURED_REPLY_MAGIC = 0x668e33ef
 )
 
+// NBD default port
 const (
 	NBD_DEFAULT_PORT = 10809
 )
 
+// NBD options
 const (
 	NBD_OPT_EXPORT_NAME      = 1
 	NBD_OPT_ABORT            = 2
@@ -53,11 +65,13 @@ const (
 	NBD_OPT_STRUCTURED_REPLY = 8
 )
 
+// NBD option reply types
 const (
 	NBD_REP_ACK    = 1
 	NBD_REP_SERVER = 2
 )
 
+// NBD option reply types
 const (
 	NBD_REP_FLAG_ERROR   = 1 << 31
 	NBD_REP_ERR_UNSUP    = 1 | NBD_REP_FLAG_ERROR
@@ -66,10 +80,12 @@ const (
 	NBD_REP_ERR_PLATFORM = 4 | NBD_REP_FLAG_ERROR
 )
 
+// NBD reply flags
 const (
 	NBD_REPLY_FLAG_DONE = 1 << 0
 )
 
+// NBD reply types
 const (
 	NBD_REPLY_TYPE_NONE         = 0
 	NBD_REPLY_TYPE_ERROR        = 1
@@ -78,6 +94,7 @@ const (
 	NBD_REPLY_TYPE_OFFSET_HOLE  = 4
 )
 
+// NBD server flags
 const (
 	NBD_FLAG_FIXED_NEWSTYLE   = 1 << 0
 	NBD_FLAG_NO_ZEROES        = 1 << 1
@@ -85,6 +102,7 @@ const (
 	NBD_FLAG_C_NO_ZEROES      = NBD_FLAG_NO_ZEROES
 )
 
+// NBD errors
 const (
 	NBD_EPERM     = 1
 	NBD_EIO       = 5
@@ -94,27 +112,32 @@ const (
 	NBD_EOVERFLOW = 75
 )
 
+// NBD new style header
 type nbdNewStyleHeader struct {
 	NbdMagic       uint64
 	NbdOptsMagic   uint64
 	NbdGlobalFlags uint16
 }
 
+// NBD client flags
 type nbdClientFlags struct {
 	NbdClientFlags uint32
 }
 
+// NBD client options
 type nbdClientOpt struct {
 	NbdOptMagic uint64
 	NbdOptId    uint32
 	NbdOptLen   uint32
 }
 
+// NBD export details
 type nbdExportDetails struct {
 	NbdExportSize  uint64
 	NbdExportFlags uint16
 }
 
+// NBD option reply
 type nbdOptReply struct {
 	NbdOptReplyMagic  uint64
 	NbdOptId          uint32
@@ -122,6 +145,7 @@ type nbdOptReply struct {
 	NbdOptReplyLength uint32
 }
 
+// NBD request
 type nbdRequest struct {
 	NbdRequestMagic uint32
 	NbdCommandFlags uint16
@@ -131,8 +155,30 @@ type nbdRequest struct {
 	NbdLength       uint32
 }
 
+// NBD simple reply
 type nbdReply struct {
 	NbdReplyMagic uint32
 	NbdError      uint32
 	NbdHandle     uint64
+}
+
+/* --- END OF NBD PROTOCOL SECTION --- */
+
+// Our internal flags to characterize commands
+const (
+	CMDT_CHECK_LENGTH_OFFSET = 1 << iota // length and offset must be valid
+	CMDT_REQ_PAYLOAD                     // request carries a payload
+	CMDT_REQ_FAKE_PAYLOAD                // request does not carry a payload, but we'll make a zero payload up
+	CMDT_REP_PAYLOAD                     // reply carries a payload
+	CMDT_CHECK_NOT_READ_ONLY             // not valid on read-only media
+)
+
+// A map specifying each command
+var CmdTypeMap = map[int]uint64{
+	NBD_CMD_READ:         CMDT_CHECK_LENGTH_OFFSET | CMDT_REP_PAYLOAD,
+	NBD_CMD_WRITE:        CMDT_CHECK_LENGTH_OFFSET | CMDT_CHECK_NOT_READ_ONLY | CMDT_REQ_PAYLOAD,
+	NBD_CMD_DISC:         0,
+	NBD_CMD_FLUSH:        CMDT_CHECK_NOT_READ_ONLY,
+	NBD_CMD_TRIM:         CMDT_CHECK_LENGTH_OFFSET | CMDT_CHECK_NOT_READ_ONLY,
+	NBD_CMD_WRITE_ZEROES: CMDT_CHECK_LENGTH_OFFSET | CMDT_CHECK_NOT_READ_ONLY | CMDT_REQ_FAKE_PAYLOAD,
 }

@@ -8,22 +8,35 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
+	"sync"
 	"time"
 )
 
+// Default number of workers
+var DefaultWorkers = 5
+
+// ConnectionParameters holds parameters for each inbound connection
 type ConnectionParameters struct {
-	ConnectionTimeout time.Duration
-	ReadTimeout       time.Duration
-	WriteTimeout      time.Duration
+	ConnectionTimeout time.Duration // maximum time to complete negotiation
 }
 
+// Connection holds the details for each connection
 type Connection struct {
-	params   *ConnectionParameters
-	conn     net.Conn
-	logger   *log.Logger
-	listener *Listener
-	export   *Export
-	backend  Backend
+	params   *ConnectionParameters // parameters
+	conn     net.Conn              // the underlying connection
+	logger   *log.Logger           // a logger
+	listener *Listener             // the listener than invoked us
+	export   *Export               // a pointer to the export
+	backend  Backend               // the backend implementation
+	wg       sync.WaitGroup        // a waitgroup for the session; we mark this as done on exit
+	rxCh     chan Request          // a channel of requests that have been received, and need to be dispatched to a worker
+	txCh     chan Request          // a channel of outputs from the worker. By this time they have replies in that need to be transmitted
+	name     string                // the name of the connection for logging purposes
+
+	killCh    chan struct{} // closed by workers to indicate a hard close is required
+	killed    bool          // true if killCh closed already
+	killMutex sync.Mutex    // protects killed
 }
 
 // Backend is an interface implemented by the various backend drivers
@@ -36,18 +49,30 @@ type Backend interface {
 	Size(ctx context.Context) (uint64, error)                                   // size
 }
 
+// Details of an export
 type Export struct {
-	size        uint64
-	exportFlags uint16
-	name        string
-	readonly    bool
+	size        uint64 // size in bytes
+	exportFlags uint16 // export flags in NBD format
+	name        string // name of the export
+	readonly    bool   // true if read only
+	workers     int    // number of workers
 }
 
+// Request is an internal structure for propagating requests through the channels
+type Request struct {
+	nbdReq  nbdRequest // the request in nbd format
+	nbdRep  nbdReply   // the reply in nbd format
+	length  int        // the checked length
+	offset  int64      // the checked offset
+	reqData []byte     // request data (e.g. for a write)
+	repData []byte     // reply data (e.g. for a read)
+	flags   uint64     // our internal flag structure characterizing the request
+}
+
+// newConection returns a new Connection object
 func newConnection(listener *Listener, logger *log.Logger, conn net.Conn) (*Connection, error) {
 	params := &ConnectionParameters{
 		ConnectionTimeout: time.Second * 5,
-		ReadTimeout:       time.Second * 3600,
-		WriteTimeout:      time.Second * 30,
 	}
 	c := &Connection{
 		conn:     conn,
@@ -58,8 +83,249 @@ func newConnection(listener *Listener, logger *log.Logger, conn net.Conn) (*Conn
 	return c, nil
 }
 
+// NbdError translates an error returned by golang into an NBD error
+//
+// This function could do with some serious work!
+func NbdError(err error) uint32 {
+	return NBD_EIO
+}
+
+// isClosedErr returns true if the error related to use of a closed connection.
+//
+// this is particularly foul but is used to surpress errors that relate to use of a closed connection. This is because
+// they only arise as we ourselves close the connection to get blocking reads/writes to safely terminate, and thus do
+// not want to report them to the user as an error
+func isClosedErr(err error) bool {
+	return strings.HasSuffix(err.Error(), "use of closed network connection") // YUCK!
+}
+
+// Kill kills a connection. This safely ensures the kill channel is closed if it isn't already, which will
+// kill all the goroutines
+func (c *Connection) Kill(ctx context.Context) {
+	c.killMutex.Lock()
+	defer c.killMutex.Unlock()
+	if !c.killed {
+		close(c.killCh)
+		c.killed = true
+	}
+}
+
+// Receive is the goroutine that handles decoding conncetion data from the socket
+func (c *Connection) Receive(ctx context.Context) {
+	defer func() {
+		c.logger.Printf("[INFO] Receiver exiting for %s", c.name)
+		c.Kill(ctx)
+		c.wg.Done()
+	}()
+	for {
+		req := Request{
+			repData: make([]byte, 0),
+			reqData: make([]byte, 0),
+		}
+		if err := binary.Read(c.conn, binary.BigEndian, &req.nbdReq); err != nil {
+			if nerr, ok := err.(net.Error); ok {
+				if nerr.Timeout() {
+					c.logger.Printf("[INFO] Client %s timeout, closing connection", c.name)
+					return
+				}
+			}
+			if isClosedErr(err) {
+				// Don't report this - we closed it
+				return
+			}
+			c.logger.Printf("[ERROR] Client %s could not read request: %s", c.name, err)
+			return
+		}
+
+		if req.nbdReq.NbdRequestMagic != NBD_REQUEST_MAGIC {
+			c.logger.Printf("[ERROR] Client %s had bad magic number in request", c.name)
+			return
+		}
+
+		req.nbdRep = nbdReply{
+			NbdReplyMagic: NBD_REPLY_MAGIC,
+			NbdHandle:     req.nbdReq.NbdHandle,
+			NbdError:      0,
+		}
+
+		cmd := req.nbdReq.NbdCommandType
+		var ok bool
+		if req.flags, ok = CmdTypeMap[int(cmd)]; !ok {
+			c.logger.Printf("[ERROR] Client %s unknown command %d", c.name, cmd)
+			return
+		}
+
+		if req.flags&CMDT_CHECK_LENGTH_OFFSET != 0 {
+			req.length = int(req.nbdReq.NbdLength)
+			req.offset = int64(req.nbdReq.NbdOffset)
+			if req.length <= 0 || req.offset < 0 || int64(req.length)+req.offset > int64(c.export.size) {
+				c.logger.Printf("[ERROR] Client %s gave bad offset or length", c.name)
+				return
+			}
+		}
+
+		if req.flags&CMDT_REQ_PAYLOAD != 0 {
+			req.reqData = make([]byte, req.length, req.length)
+			if req.length <= 0 {
+				c.logger.Printf("[ERROR] Client %s gave bad length", c.name)
+				return
+			}
+			n, err := io.ReadFull(c.conn, req.reqData)
+			if err != nil {
+				if isClosedErr(err) {
+					// Don't report this - we closed it
+					return
+				}
+
+				c.logger.Printf("[ERROR] Client %s cannot read data to write: %s", c.name, err)
+				return
+			}
+
+			if n != len(req.reqData) {
+				c.logger.Printf("[ERROR] Client %s cannot read all data to write: %d != %d", c.name, n, len(req.reqData))
+				return
+
+			}
+		} else if req.flags&CMDT_REQ_FAKE_PAYLOAD != 0 {
+			req.reqData = make([]byte, req.length, req.length)
+		}
+
+		if req.flags&CMDT_REP_PAYLOAD != 0 {
+			req.repData = make([]byte, req.length, req.length)
+		}
+
+		if req.flags&CMDT_CHECK_NOT_READ_ONLY != 0 && c.export.readonly {
+			req.nbdRep.NbdError = NBD_EPERM
+			select {
+			case c.txCh <- req:
+			case <-ctx.Done():
+				return
+			}
+		} else {
+			select {
+			case c.rxCh <- req:
+			case <-ctx.Done():
+				return
+			}
+		}
+
+	}
+}
+
+// checkpoint is an internal debugging routine
+func checkpoint(t *time.Time) time.Duration {
+	t1 := time.Now()
+	d := t1.Sub(*t)
+	*t = t1
+	return d
+}
+
+// Dispatch is the goroutine used to process received items, passing the reply to the transmit goroutine
+//
+// one of these is run for each worker
+func (c *Connection) Dispatch(ctx context.Context, n int) {
+	defer func() {
+		c.logger.Printf("[INFO] Dispatcher %d exiting for %s", n, c.name)
+		c.Kill(ctx)
+		c.wg.Done()
+	}()
+	//t := time.Now()
+	for {
+		//c.logger.Printf("[DEBUG] Client %s dispatcher %d waiting latency %s", c.name, n, checkpoint(&t))
+		select {
+		case <-ctx.Done():
+			return
+		case req, ok := <-c.rxCh:
+			if !ok {
+				return
+			}
+			//c.logger.Printf("[DEBUG] Client %s dispatcher %d command %d latency %s", c.name, n, req.nbdReq.NbdCommandType, checkpoint(&t))
+			fua := req.nbdReq.NbdCommandFlags&NBD_CMD_FLAG_FUA != 0
+
+			switch req.nbdReq.NbdCommandType {
+			case NBD_CMD_READ:
+				n, err := c.backend.ReadAt(ctx, req.repData, req.offset)
+				if err != nil {
+					c.logger.Printf("[WARN] Client %s got read I/O error: %s", c.name, err)
+					req.nbdRep.NbdError = NbdError(err)
+				} else if n != req.length {
+					c.logger.Printf("[WARN] Client %s got incomplete read (%d != %d) at offset %d", c.name, n, req.length, req.offset)
+					req.nbdRep.NbdError = NBD_EIO
+				}
+			case NBD_CMD_WRITE, NBD_CMD_WRITE_ZEROES:
+				n, err := c.backend.WriteAt(ctx, req.reqData, req.offset, fua)
+				if err != nil {
+					c.logger.Printf("[WARN] Client %s got write I/O error: %s", c.name, err)
+					req.nbdRep.NbdError = NbdError(err)
+				} else if n != req.length {
+					c.logger.Printf("[WARN] Client %s got incomplete write (%d != %d) at offset %d", c.name, n, req.length, req.offset)
+					req.nbdRep.NbdError = NBD_EIO
+				}
+			case NBD_CMD_FLUSH:
+				c.backend.Flush(ctx)
+			case NBD_CMD_TRIM:
+				n, err := c.backend.TrimAt(ctx, req.length, req.offset)
+				if err != nil {
+					c.logger.Printf("[WARN] Client %s got write I/O error: %s", c.name, err)
+					req.nbdRep.NbdError = NbdError(err)
+				} else if n != req.length {
+					c.logger.Printf("[WARN] Client %s got incomplete write (%d != %d) at offset %d", c.name, n, req.length, req.offset)
+					req.nbdRep.NbdError = NBD_EIO
+				}
+			case NBD_CMD_DISC:
+				c.logger.Printf("[INFO] Client %s requested disconnect", c.name)
+				return
+			default:
+				c.logger.Printf("[ERROR] Client %s sent unknown command %d", c.name, req.nbdReq.NbdCommandType)
+				return
+			}
+			select {
+			case c.txCh <- req:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+}
+
+// Transmit is the goroutine run to transmit the processed requests (now replies)
+func (c *Connection) Transmit(ctx context.Context) {
+	defer func() {
+		c.logger.Printf("[INFO] Transmitter exiting for %s", c.name)
+		c.Kill(ctx)
+		c.wg.Done()
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case req, ok := <-c.txCh:
+			if !ok {
+				return
+			}
+			if err := binary.Write(c.conn, binary.BigEndian, req.nbdRep); err != nil {
+				c.logger.Printf("[ERROR] Client %s cannot write reply", c.name)
+				return
+			}
+			if req.flags&CMDT_REP_PAYLOAD != 0 && len(req.repData) > 0 {
+				if n, err := c.conn.Write(req.repData); err != nil || n != len(req.repData) {
+					c.logger.Printf("[ERROR] Client %s cannot write reply", c.name)
+					return
+				}
+			}
+		}
+	}
+}
+
+// Serve negotiates, then starts all the goroutines for processing a connection, then waits for them to be ended
 func (c *Connection) Serve(parentCtx context.Context) {
 	ctx, cancelFunc := context.WithCancel(parentCtx)
+
+	c.rxCh = make(chan Request, 1024)
+	c.txCh = make(chan Request, 1024)
+	c.killCh = make(chan struct{})
+
+	c.name = c.conn.RemoteAddr().String()
 
 	defer func() {
 		if c.backend != nil {
@@ -67,142 +333,47 @@ func (c *Connection) Serve(parentCtx context.Context) {
 		}
 		c.conn.Close()
 		cancelFunc()
-		c.logger.Printf("[INFO] Closing connection from %s", c.conn.RemoteAddr())
+		c.Kill(ctx) // to ensure the kill channel is closed
+		c.wg.Wait()
+		close(c.rxCh)
+		close(c.txCh)
+		c.logger.Printf("[INFO] Closed connection from %s", c.name)
 	}()
 
 	if err := c.Negotiate(ctx); err != nil {
-		c.logger.Printf("[INFO] Negotiation failed with %s: %v", c.conn.RemoteAddr(), err)
+		c.logger.Printf("[INFO] Negotiation failed with %s: %v", c.name, err)
 		return
 	}
 
-	c.logger.Printf("[INFO] Negotiation succeeded with %s for export %s", c.conn.RemoteAddr(), c.export.name)
+	c.name = c.name + "/" + c.export.name
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
+	workers := c.export.workers
 
-		//		c.conn.SetReadDeadline(time.Now().Add(5*time.Second/*c.params.ReadTimeout*/))
-		//		c.conn.SetWriteDeadline(time.Now().Add(5*time.Second/*c.params.ReadTimeout*/))
+	if workers < 1 {
+		workers = DefaultWorkers
+	}
 
-		var req nbdRequest
-		if err := binary.Read(c.conn, binary.BigEndian, &req); err != nil {
-			if nerr, ok := err.(net.Error); ok {
-				if nerr.Timeout() {
-					c.logger.Printf("[INFO] Client %s timeout, closing connection", c.conn.RemoteAddr())
-					return
-				}
-			}
-			c.logger.Printf("[ERROR] Cient %s could not read request: %s", c.conn.RemoteAddr(), err)
-			return
-		}
+	c.logger.Printf("[INFO] Negotiation succeeded with %s, serving with %d worker(s)", c.name, workers)
 
-		if req.NbdRequestMagic != NBD_REQUEST_MAGIC {
-			c.logger.Printf("[ERROR] Client %s had bad magic number in request", c.conn.RemoteAddr())
-			return
-		}
+	c.wg.Add(2)
+	go c.Receive(ctx)
+	go c.Transmit(ctx)
+	for i := 0; i < workers; i++ {
+		c.wg.Add(1)
+		go c.Dispatch(ctx, i)
+	}
 
-		rep := nbdReply{
-			NbdReplyMagic: NBD_REPLY_MAGIC,
-			NbdHandle:     req.NbdHandle,
-			NbdError:      0,
-		}
-		repdata := make([]byte, 0)
-
-		length := int(req.NbdLength)
-		offset := int64(req.NbdOffset)
-
-		// c.logger.Printf("[DEBUG] Client %s command %d", c.conn.RemoteAddr(), req.NbdCommandType)
-
-		switch req.NbdCommandType {
-		case NBD_CMD_READ:
-			if length <= 0 || offset < 0 {
-				c.logger.Printf("[ERROR] Client %s gave bad length or offest", c.conn.RemoteAddr())
-				return
-			}
-			repdata = make([]byte, length, length)
-			n, err := c.backend.ReadAt(ctx, repdata, offset)
-			if err != nil {
-				c.logger.Printf("[WARN] Client %s got read I/O error: %s", c.conn.RemoteAddr(), err)
-				rep.NbdError = NBD_EIO //TODO: work out proper error mapping
-			} else if n != length {
-				c.logger.Printf("[WARN] Client %s got incomplete read (%d != %d) at offset %d", n, length, offset)
-				rep.NbdError = NBD_EIO
-			}
-		case NBD_CMD_WRITE, NBD_CMD_WRITE_ZEROES:
-			if length <= 0 || offset < 0 {
-				c.logger.Printf("[ERROR] Client %s gave bad length or offest", c.conn.RemoteAddr())
-				return
-			}
-			data := make([]byte, length, length)
-			if req.NbdCommandType != NBD_CMD_WRITE_ZEROES {
-				n, err := io.ReadFull(c.conn, data)
-				if err != nil {
-					c.logger.Printf("[ERROR] Client %s cannot read data to write: %s", c.conn.RemoteAddr(), err)
-					return
-				}
-
-				if n != len(data) {
-					c.logger.Printf("[ERROR] Client %s cannot read all data to write: %d != %d", c.conn.RemoteAddr(), n, len(data))
-					return
-				}
-			}
-			fua := req.NbdCommandFlags&NBD_CMD_FLAG_FUA != 0
-			if c.export.readonly {
-				c.logger.Printf("[WARN] Client %s got write to read-only device", c.conn.RemoteAddr())
-				rep.NbdError = NBD_EPERM
-			} else {
-				n, err := c.backend.WriteAt(ctx, data, offset, fua)
-				if err != nil {
-					c.logger.Printf("[WARN] Client %s got write I/O error: %s", c.conn.RemoteAddr(), err)
-					rep.NbdError = NBD_EIO //TODO: work out proper error mapping
-				} else if n != length {
-					c.logger.Printf("[WARN] Client %s got incomplete write (%d != %d) at offset %d", n, length, offset)
-					rep.NbdError = NBD_EIO
-				}
-			}
-		case NBD_CMD_FLUSH:
-			if c.export.readonly {
-				c.logger.Printf("[WARN] Client %s got flush to read-only device", c.conn.RemoteAddr())
-				rep.NbdError = NBD_EPERM
-			} else {
-				c.backend.Flush(ctx)
-			}
-		case NBD_CMD_TRIM:
-			if c.export.readonly {
-				c.logger.Printf("[WARN] Client %s got trim to read-only device", c.conn.RemoteAddr())
-				rep.NbdError = NBD_EPERM
-			} else {
-				n, err := c.backend.TrimAt(ctx, length, offset)
-				if err != nil {
-					c.logger.Printf("[WARN] Client %s got write I/O error: %s", c.conn.RemoteAddr(), err)
-					rep.NbdError = NBD_EIO //TODO: work out proper error mapping
-				} else if n != length {
-					c.logger.Printf("[WARN] Client %s got incomplete write (%d != %d) at offset %d", n, length, offset)
-					rep.NbdError = NBD_EIO
-				}
-			}
-		case NBD_CMD_DISC:
-			c.logger.Printf("[INFO] Client %s requested disconnect", c.conn.RemoteAddr())
-			return
-		default:
-			c.logger.Printf("[ERROR] Client %s sent unknown command %d", c.conn.RemoteAddr(), req.NbdCommandType)
-			return
-		}
-
-		if err := binary.Write(c.conn, binary.BigEndian, rep); err != nil {
-			c.logger.Printf("[ERROR] Client %s cannot write reply", c.conn.RemoteAddr())
-		}
-		if len(repdata) > 0 {
-			if n, err := c.conn.Write(repdata); err != nil || n != len(repdata) {
-				c.logger.Printf("[ERROR] Client %s cannot write reply", c.conn.RemoteAddr())
-			}
-		}
+	// Wait until either we are explicitly killed or one of our
+	// workers dies
+	select {
+	case <-c.killCh:
+		c.logger.Printf("[INFO] Worker forced close for %s", c.name)
+	case <-ctx.Done():
+		c.logger.Printf("[INFO] Parent forced close for %s", c.name)
 	}
 }
 
+// Negotiate negotiates a connection
 func (c *Connection) Negotiate(ctx context.Context) error {
 	c.conn.SetDeadline(time.Now().Add(c.params.ConnectionTimeout))
 
@@ -294,6 +465,7 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 	return nil
 }
 
+// getExport generates an export for a given name, choosing the specified backend
 func (c *Connection) getExport(ctx context.Context, name string) (*Export, error) {
 	for _, e := range c.listener.exports {
 		if e.Name == name {
@@ -322,6 +494,7 @@ func (c *Connection) getExport(ctx context.Context, name string) (*Export, error
 				exportFlags: NBD_FLAG_HAS_FLAGS | NBD_FLAG_SEND_FLUSH | NBD_FLAG_SEND_FUA | NBD_FLAG_SEND_WRITE_ZEROES,
 				name:        name,
 				readonly:    e.ReadOnly,
+				workers:     e.Workers,
 			}, nil
 		}
 	}

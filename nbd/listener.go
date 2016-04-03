@@ -8,12 +8,12 @@ import (
 	"time"
 )
 
-// A single li on a given TCP address
+// A single listener on a given net.Conn address
 type Listener struct {
-	logger   *log.Logger
-	protocol string
-	addr     string
-	exports  []ExportConfig
+	logger   *log.Logger    // a logger
+	protocol string         // the protocol we are listening on
+	addr     string         // the address
+	exports  []ExportConfig // a list of export configurations associated
 }
 
 // An listener type that does what we want
@@ -22,6 +22,10 @@ type DeadlineListener interface {
 	net.Listener
 }
 
+// Listen listens on an given address for incoming connections
+//
+// When sessions come in they are started on a separate context (sessionParentCtx), so that the listener can be killed without
+// killing the sessions
 func (l *Listener) Listen(parentCtx context.Context, sessionParentCtx context.Context, sessionWaitGroup *sync.WaitGroup) {
 
 	addr := l.protocol + ":" + l.addr
@@ -87,6 +91,7 @@ func (l *Listener) Listen(parentCtx context.Context, sessionParentCtx context.Co
 
 }
 
+// NewListener returns a new listener object
 func NewListener(logger *log.Logger, protocol string, addr string, exports []ExportConfig) (*Listener, error) {
 	l := &Listener{
 		logger:   logger,
