@@ -12,15 +12,17 @@ Features
 
 * **Multithreaded**. Defaults to 5 worker threads per connection, so able to
   process requests in parallel.
-  
+
 * **Pluggable backends**. By default a file backend is provided, but it would
   be possible to supply any backend.
-  
+
 * **Reloadable configuration**. It is possible to reload the configuration
   using `SIGHUP` without affecting existing servers.
-  
+
 * **Newstyle negotiation (only)**. Oldstyle negotiation is not supported. This is
   a feature, not a bug.
+
+* **Logging**. To syslog, a file, or stderr
  
 Configuration
 -------------
@@ -50,6 +52,8 @@ servers:
   - name: baz                    # named bar
     driver: file                 # using the file driver
     path: /tmp/baz               # on this file
+logging:                         # log to
+  syslogfacility: local1         # local1
 ```    
 
 Invocation
