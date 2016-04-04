@@ -49,6 +49,9 @@ type Backend interface {
 	Size(ctx context.Context) (uint64, error)                                   // size
 }
 
+// BackendMap is a map between backends and the generator function for them
+var BackendMap map[string]func(ctx context.Context, e *ExportConfig) (Backend, error) = make(map[string]func(ctx context.Context, e *ExportConfig) (Backend, error))
+
 // Details of an export
 type Export struct {
 	size        uint64 // size in bytes
@@ -469,34 +472,36 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 func (c *Connection) getExport(ctx context.Context, name string) (*Export, error) {
 	for _, e := range c.listener.exports {
 		if e.Name == name {
-			var backend Backend
-			var err error
-			switch e.Driver {
-			case "file":
-				backend, err = NewFileBackend(ctx, &e)
-			default:
+			if backendgen, ok := BackendMap[e.Driver]; !ok {
 				return nil, fmt.Errorf("No such driver %s", e.Driver)
+			} else {
+				if backend, err := backendgen(ctx, &e); err != nil {
+					return nil, err
+				} else {
+					size, err := backend.Size(ctx)
+					if err != nil {
+						backend.Close(ctx)
+						return nil, err
+					}
+					if c.backend != nil {
+						c.backend.Close(ctx)
+					}
+					c.backend = backend
+					return &Export{
+						size:        size,
+						exportFlags: NBD_FLAG_HAS_FLAGS | NBD_FLAG_SEND_FLUSH | NBD_FLAG_SEND_FUA | NBD_FLAG_SEND_WRITE_ZEROES,
+						name:        name,
+						readonly:    e.ReadOnly,
+						workers:     e.Workers,
+					}, nil
+
+				}
 			}
-			if err != nil {
-				return nil, err
-			}
-			size, err := backend.Size(ctx)
-			if err != nil {
-				backend.Close(ctx)
-				return nil, err
-			}
-			if c.backend != nil {
-				c.backend.Close(ctx)
-			}
-			c.backend = backend
-			return &Export{
-				size:        size,
-				exportFlags: NBD_FLAG_HAS_FLAGS | NBD_FLAG_SEND_FLUSH | NBD_FLAG_SEND_FUA | NBD_FLAG_SEND_WRITE_ZEROES,
-				name:        name,
-				readonly:    e.ReadOnly,
-				workers:     e.Workers,
-			}, nil
 		}
 	}
 	return nil, errors.New("No such export")
+}
+
+func RegisterBackend(name string, generator func(ctx context.Context, e *ExportConfig) (Backend, error)) {
+	BackendMap[name] = generator
 }

@@ -50,7 +50,7 @@ func (fb *FileBackend) Size(ctx context.Context) (uint64, error) {
 }
 
 // Generate a new file backend
-func NewFileBackend(ctx context.Context, ec *ExportConfig) (*FileBackend, error) {
+func NewFileBackend(ctx context.Context, ec *ExportConfig) (Backend, error) {
 	perms := os.O_RDWR
 	if ec.ReadOnly {
 		perms = os.O_RDONLY
@@ -68,4 +68,9 @@ func NewFileBackend(ctx context.Context, ec *ExportConfig) (*FileBackend, error)
 		file: file,
 		size: uint64(stat.Size()),
 	}, nil
+}
+
+// Register our backend
+func init() {
+	RegisterBackend("file", NewFileBackend)
 }
