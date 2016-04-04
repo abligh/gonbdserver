@@ -24,6 +24,31 @@ Features
 
 * **Logging**. To syslog, a file, or stderr
  
+Invocation
+----------
+
+Invocation is very easy. It takes a minimum number of command-line flags. Most
+of the configuration is within the configuration file.
+
+```
+$ ./gonbdserver --help
+Usage of ./gonbdserver:
+  -c string
+    	Path to YAML config file (default "/etc/gonbdserver.conf")
+  -f	Run in foreground (not as daemon)
+  -p string
+    	Path to PID file (default "/var/run/gonbdserver.pid")
+  -s string
+    	Send signal to daemon (either 'stop' or 'reload')
+```
+
+By default `gonbdserver` runs as a daemon. You can use `-f` to make it run in the foreground.
+If you are running on Linux and want to run from `init`, you may wish to consider using
+`start-stop-daemon` with the `-b` flag, and invoking `gondbserver` with the `-f` flag,
+as `start-stop-daemon` is probably better at dealing with the many possible failure modes.
+
+When running in foreground mode, the `pid` file is not used, and `-s` is irrelevant.
+
 Configuration
 -------------
 
@@ -56,19 +81,6 @@ servers:
 logging:                         # log to
   syslogfacility: local1         # local1
 ```    
-
-Invocation
-----------
-
-Invocation is very easy. It takes solely one command line flag.
-```
-$ gonbdserver
-Usage of ./gonbdserver:
-  -c string
-    	Path to YAML config file (default "/etc/gonbdserver.conf")
-```
-
-Currently there is no support for daemonizing. I suggest you use `start-stop-daemon` to do this.
 
 Licence
 -------

@@ -3,6 +3,7 @@ package nbd
 import (
 	"flag"
 	"fmt"
+	"github.com/sevlyar/go-daemon"
 	"golang.org/x/net/context"
 	"gopkg.in/yaml.v2"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"log/syslog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"sync"
@@ -46,6 +48,14 @@ logging:
 
 // Location of the config file on disk; overriden by flags
 var configFile = flag.String("c", "/etc/gonbdserver.conf", "Path to YAML config file")
+var pidFile = flag.String("p", "/var/run/gonbdserver.pid", "Path to PID file")
+var sendSignal = flag.String("s", "", "Send signal to daemon (either 'stop' or 'reload')")
+var foreground = flag.Bool("f", false, "Run in foreground (not as daemon)")
+
+const (
+	ENV_CONFFILE = "_GONBDSERVER_CONFFILE"
+	ENV_PIDFILE  = "_GONBDSERVER_PIDFILE"
+)
 
 // Config holds the config that applies to all servers (currently just logging), and an array of server configs
 type Config struct {
@@ -90,6 +100,7 @@ type SyslogWriter struct {
 	w        *syslog.Writer
 }
 
+// facilityMap maps textual
 var facilityMap map[string]syslog.Priority = map[string]syslog.Priority{
 	"kern":     syslog.LOG_KERN,
 	"user":     syslog.LOG_USER,
@@ -113,6 +124,7 @@ var facilityMap map[string]syslog.Priority = map[string]syslog.Priority{
 	"local7":   syslog.LOG_LOCAL7,
 }
 
+// levelMap maps textual levels to syslog levels
 var levelMap map[string]syslog.Priority = map[string]syslog.Priority{
 	"EMERG":   syslog.LOG_EMERG,
 	"ALERT":   syslog.LOG_ALERT,
@@ -124,6 +136,16 @@ var levelMap map[string]syslog.Priority = map[string]syslog.Priority{
 	"NOTICE":  syslog.LOG_NOTICE,
 	"INFO":    syslog.LOG_INFO,
 	"DEBUG":   syslog.LOG_DEBUG,
+}
+
+// isTruthy determines whether an argument is true
+func isSet(v string) (bool, error) {
+	if v == "true" {
+		return true, nil
+	} else if v == "false" || v == "" {
+		return false, nil
+	}
+	return false, fmt.Errorf("Unknown boolean value: %s", v)
 }
 
 // Create a new syslog writer
@@ -183,7 +205,6 @@ func (s *SyslogWriter) Write(p []byte) (n int, err error) {
 
 // ParseConfig parses the YAML configuration provided
 func ParseConfig() (*Config, error) {
-	flag.Parse()
 	if buf, err := ioutil.ReadFile(*configFile); err != nil {
 		return nil, err
 	} else {
@@ -335,12 +356,93 @@ func RunConfig() {
 	}
 }
 
-// isTruthy determines whether an argument is true
-func isSet(v string) (bool, error) {
-	if v == "true" {
-		return true, nil
-	} else if v == "false" || v == "" {
-		return false, nil
+func Run() {
+	// Just for this routine
+	logger := log.New(os.Stderr, "gonbdserver:", log.LstdFlags)
+
+	daemon.AddFlag(daemon.StringFlag(sendSignal, "stop"), syscall.SIGTERM)
+	daemon.AddFlag(daemon.StringFlag(sendSignal, "reload"), syscall.SIGHUP)
+	flag.Parse()
+
+	if daemon.WasReborn() {
+		if val, ok := os.LookupEnv(ENV_CONFFILE); ok {
+			*configFile = val
+		}
+		if val, ok := os.LookupEnv(ENV_PIDFILE); ok {
+			*pidFile = val
+		}
 	}
-	return false, fmt.Errorf("Unknown boolean value: %s", v)
+
+	var err error
+	if *configFile, err = filepath.Abs(*configFile); err != nil {
+		logger.Fatalf("[CRIT] Error canonicalising config file path: %s", err)
+	}
+	if *pidFile, err = filepath.Abs(*pidFile); err != nil {
+		logger.Fatalf("[CRIT] Error canonicalising pid file path: %v", err)
+	}
+
+	// check the configuration parses. We do nothing with this at this stage
+	// but it eliminates a problem where the log of the configuration failing
+	// is invisible when daemonizing naively (e.g. when no alternate log
+	// destination is supplied) and the config file cannot be read
+	if _, err := ParseConfig(); err != nil {
+		logger.Fatalf("[CRIT] Cannot parse configuration file: %v", err)
+		return
+	}
+
+	if *foreground {
+		RunConfig()
+		return
+	}
+
+	os.Setenv(ENV_CONFFILE, *configFile)
+	os.Setenv(ENV_PIDFILE, *pidFile)
+
+	// Define daemon context
+	d := &daemon.Context{
+		PidFileName: *pidFile,
+		PidFilePerm: 0644,
+		Umask:       027,
+	}
+
+	// Send commands if needed
+	if len(daemon.ActiveFlags()) > 0 {
+		p, err := d.Search()
+		if err != nil {
+			logger.Fatalf("[CRIT] Unable send signal to the daemon - not running")
+		}
+		if err := p.Signal(syscall.Signal(0)); err != nil {
+			logger.Fatalf("[CRIT] Unable send signal to the daemon - not running, perhaps PID file is stale")
+		}
+		daemon.SendCommands(p)
+		return
+	}
+
+	if !daemon.WasReborn() {
+		if p, err := d.Search(); err == nil {
+			if err := p.Signal(syscall.Signal(0)); err == nil {
+				logger.Fatalf("[CRIT] Daemon is already running (pid %d)", p.Pid)
+			} else {
+				logger.Printf("[INFO] Removing stale PID file %s", *pidFile)
+				os.Remove(*pidFile)
+			}
+		}
+	}
+
+	// Process daemon operations - send signal if present flag or daemonize
+	child, err := d.Reborn()
+	if err != nil {
+		logger.Fatalf("[CRIT] Daemonize: %s", err)
+	}
+	if child != nil {
+		return
+	}
+
+	defer func() {
+		d.Release()
+		// for some reason this is not removing the pid file
+		os.Remove(*pidFile)
+	}()
+
+	RunConfig()
 }
