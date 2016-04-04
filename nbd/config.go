@@ -365,10 +365,10 @@ func Run() {
 	flag.Parse()
 
 	if daemon.WasReborn() {
-		if val, ok := os.LookupEnv(ENV_CONFFILE); ok {
+		if val := os.Getenv(ENV_CONFFILE); val != "" {
 			*configFile = val
 		}
-		if val, ok := os.LookupEnv(ENV_PIDFILE); ok {
+		if val := os.Getenv(ENV_PIDFILE); val != "" {
 			*pidFile = val
 		}
 	}
