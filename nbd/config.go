@@ -49,7 +49,7 @@ logging:
 // Location of the config file on disk; overriden by flags
 var configFile = flag.String("c", "/etc/gonbdserver.conf", "Path to YAML config file")
 var pidFile = flag.String("p", "/var/run/gonbdserver.pid", "Path to PID file")
-var sendSignal = flag.String("s", "", "Send signal to daemon (either 'stop' or 'reload')")
+var sendSignal = flag.String("s", "", "Send signal to daemon (either \"stop\" or \"reload\")")
 var foreground = flag.Bool("f", false, "Run in foreground (not as daemon)")
 
 const (

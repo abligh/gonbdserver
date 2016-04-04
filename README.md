@@ -39,7 +39,7 @@ Usage of ./gonbdserver:
   -p string
     	Path to PID file (default "/var/run/gonbdserver.pid")
   -s string
-    	Send signal to daemon (either 'stop' or 'reload')
+    	Send signal to daemon (either "stop" or "reload")
 ```
 
 By default `gonbdserver` runs as a daemon. You can use `-f` to make it run in the foreground.
@@ -48,6 +48,19 @@ If you are running on Linux and want to run from `init`, you may wish to conside
 as `start-stop-daemon` is probably better at dealing with the many possible failure modes.
 
 When running in foreground mode, the `pid` file is not used, and `-s` is irrelevant.
+
+Note that to use the `-s` option, it is necessary to specify the `-c` and `-p` options
+that you used in launching the daemon.
+
+Signals
+-------
+
+* `SIGHUP` (or `gonbdserver -s reload`) will cleanly reload the configuration. Existing
+  connections to the server will be unaffected (i.e. they will run with the previous
+  configuration) until a disconnect / reconnect occurs.
+  
+* `SIGTERM` (or `gonbdserver -s stop`) will cleanly terminate the daemon. Existing
+  connections to the server will be terminated.
 
 Configuration
 -------------
@@ -81,6 +94,55 @@ servers:
 logging:                         # log to
   syslogfacility: local1         # local1
 ```    
+
+A description of the configuration file's sections is set out below
+
+#### Top level
+
+The top level of the configuration file consists of the following sections:
+* `servers:` A list of zero or more `server` items
+* `logging:` A `logging` item (optional)
+
+#### `server` items
+
+Each `server` item specifies a TCP port or unix socket that is listened to for new connections.
+
+Each `server` item consists of the following:
+* `protocol:` a description of the protocol it should listen. Valid values are `tcp`, `tcp4` (TCP on IPv4 only), `tcp6` (TCP on IPv6 ony), or `unix`. Optional, defaults to `tcp`.
+* `address:` the address to listen on. For TCP protocols, this takes the form `address:port` in the normal manner. For UNIX protocols, this is the path to a Unix domain socket. Mandatory.
+* `exports:` a list of zero or more `export` items each representing an export to be served by this server. This section is optional (and can be empty), but the server will be of little use if so.
+
+#### `export` items
+
+Each `export` item represents an export (i.e. an NBD disk) to be served by the server. Each export is served by a driver, and the drivers parameters (which are specific to the driver) may be intermingled with the export parameters.
+
+Each `export` item consists of the following (common to all drivers):
+* `name:` the name of the export as served over NBD. Mandatory.
+* `driver:` the driver. Currently valid drivers are: `file`. Mandatory.
+* `readonly:` set to `true` for readonly, `false` otherwise. Optional, defaults to `false`.
+* `workers:` the number of simultaneous worker threads. Optional, defaults to 5.
+
+The `file` driver reads the disk from a file on the host OS's disks. It has the following options:
+
+* `path:` path to the file. Mandatory.
+* `sync:` set to `true` to open the file with `O_SYNC`, else to `false`. Optional, defaults to `false`.
+
+#### `logging` item
+
+The `logging` item controls logging. There are three types of logging supported:
+* Logging to `stderr` (the default)
+* Logging to a file
+* Logging to syslog
+
+The `logging` item consists of the following:
+* `File:` a the path to a file to log to. Optional. If not specified, will not log to a file. May not be specified together with `SyslogFacility`.
+* `FileMode:` the permission mode (in octal) used to create the file. Optional. Defaults to `0644`.
+* `SyslogFacility:` the name of a syslog facility. Optional. If not specified, will not log to syslog. May not be specified together with `File:`.
+* `Date`: set to `true` to log the date, else set to `false`. Optional. Defaults to `false`. Note if logging to syslog, your syslog daemon may add the date anyway.
+* `Time`: set to `true` to log the time, else set to `false`. Optional. Defaults to `false`. Note if logging to syslog, your syslog daemon may add the time anyway.
+* `Time`: set to `true` to log the time in microseconds, else set to `false`. Optional. Defaults to `false`. Note if logging to syslog, your syslog daemon may add the time anyway.
+* `Time`: set to `true` to log the time in UTC, else set to `false`. Optional. Defaults to `false`. Note if logging to syslog, your syslog daemon may add the time anyway.
+* `SourceFile`: set to `true` to log the source file emiting the log message, else set to `false`. Optional. Defaults to `false`.
 
 Licence
 -------
