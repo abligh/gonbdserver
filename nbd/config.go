@@ -30,7 +30,6 @@ servers:
   - name: bar
     readonly: true
     driver: rbd
-    readonly: false
     rdbname: rbdbar
     timeout: 5s
 - protocol: unix
@@ -40,6 +39,7 @@ servers:
     driver: file
     readonly: false
     path: /tmp/baz
+    sync: true
 logging:
   syslogfacility: local1
 */
@@ -333,4 +333,14 @@ func RunConfig() {
 			}
 		}
 	}
+}
+
+// isTruthy determines whether an argument is true
+func isSet(v string) (bool, error) {
+	if v == "true" {
+		return true, nil
+	} else if v == "false" || v == "" {
+		return false, nil
+	}
+	return false, fmt.Errorf("Unknown boolean value: %s", v)
 }

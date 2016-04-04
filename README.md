@@ -52,6 +52,7 @@ servers:
   - name: baz                    # named bar
     driver: file                 # using the file driver
     path: /tmp/baz               # on this file
+    sync: true                   # open with O_SYNC
 logging:                         # log to
   syslogfacility: local1         # local1
 ```    

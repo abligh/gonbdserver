@@ -55,6 +55,11 @@ func NewFileBackend(ctx context.Context, ec *ExportConfig) (Backend, error) {
 	if ec.ReadOnly {
 		perms = os.O_RDONLY
 	}
+	if s, err := isSet(ec.DriverParameters["sync"]); err != nil {
+		return nil, err
+	} else if s {
+		perms |= os.O_SYNC
+	}
 	file, err := os.OpenFile(ec.DriverParameters["path"], perms, 0666)
 	if err != nil {
 		return nil, err
