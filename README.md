@@ -63,7 +63,7 @@ Invocation is very easy. It takes solely one command line flag.
 ```
 $ gonbdserver
 Usage of ./gonbdserver:
-  -configfile string
+  -c string
     	Path to YAML config file (default "/etc/gonbdserver.conf")
 ```
 

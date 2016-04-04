@@ -40,10 +40,12 @@ servers:
     driver: file
     readonly: false
     path: /tmp/baz
+logging:
+  syslogfacility: local1
 */
 
 // Location of the config file on disk; overriden by flags
-var configFile = flag.String("configfile", "/etc/gonbdserver.conf", "Path to YAML config file")
+var configFile = flag.String("c", "/etc/gonbdserver.conf", "Path to YAML config file")
 
 // Config holds the config that applies to all servers (currently just logging), and an array of server configs
 type Config struct {
