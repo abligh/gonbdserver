@@ -24,16 +24,17 @@ type ConnectionParameters struct {
 
 // Connection holds the details for each connection
 type Connection struct {
-	params   *ConnectionParameters // parameters
-	conn     net.Conn              // the underlying connection
-	logger   *log.Logger           // a logger
-	listener *Listener             // the listener than invoked us
-	export   *Export               // a pointer to the export
-	backend  Backend               // the backend implementation
-	wg       sync.WaitGroup        // a waitgroup for the session; we mark this as done on exit
-	rxCh     chan Request          // a channel of requests that have been received, and need to be dispatched to a worker
-	txCh     chan Request          // a channel of outputs from the worker. By this time they have replies in that need to be transmitted
-	name     string                // the name of the connection for logging purposes
+	params     *ConnectionParameters // parameters
+	conn       net.Conn              // the underlying connection
+	logger     *log.Logger           // a logger
+	listener   *Listener             // the listener than invoked us
+	export     *Export               // a pointer to the export
+	backend    Backend               // the backend implementation
+	wg         sync.WaitGroup        // a waitgroup for the session; we mark this as done on exit
+	rxCh       chan Request          // a channel of requests that have been received, and need to be dispatched to a worker
+	txCh       chan Request          // a channel of outputs from the worker. By this time they have replies in that need to be transmitted
+	name       string                // the name of the connection for logging purposes
+	selectName string                // the selected export name
 
 	killCh    chan struct{} // closed by workers to indicate a hard close is required
 	killed    bool          // true if killCh closed already
@@ -410,7 +411,7 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 			return errors.New("Bad option magic")
 		}
 		switch opt.NbdOptId {
-		case NBD_OPT_EXPORT_NAME:
+		case NBD_OPT_EXPORT_NAME, NBD_OPT_SELECT, NBD_OPT_GO:
 			name := make([]byte, opt.NbdOptLen)
 			n, err := io.ReadFull(c.conn, name)
 			if err != nil {
@@ -419,9 +420,30 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 			if uint32(n) != opt.NbdOptLen {
 				return errors.New("Incomplete name")
 			}
+
+			if opt.NbdOptId == NBD_OPT_SELECT {
+				c.selectName = string(name)
+			} else if len(name) == 0 {
+				name = []byte(c.selectName)
+			}
+
+			if len(name) == 0 {
+				return errors.New("No selected export specified")
+			}
+
 			export, err := c.getExport(ctx, string(name))
 			if err != nil {
-				return err
+				return err // TODO: return NBD_REP_ERR_UNSUP instead?
+			}
+
+			if opt.NbdOptId != NBD_OPT_EXPORT_NAME {
+				nameLength := uint32(len(name))
+				if err := binary.Write(c.conn, binary.BigEndian, nameLength); err != nil {
+					return errors.New("Cannot write name length")
+				}
+				if err := binary.Write(c.conn, binary.BigEndian, name); err != nil {
+					return errors.New("Cannot write name")
+				}
 			}
 
 			// this option has a unique reply format
@@ -432,7 +454,8 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 			if err := binary.Write(c.conn, binary.BigEndian, ed); err != nil {
 				return errors.New("Cannot write export details")
 			}
-			if clf.NbdClientFlags&NBD_FLAG_C_NO_ZEROES == 0 {
+
+			if clf.NbdClientFlags&NBD_FLAG_C_NO_ZEROES == 0 && opt.NbdOptId == NBD_OPT_EXPORT_NAME {
 				// send 124 bytes of zeroes.
 				zeroes := make([]byte, 124, 124)
 				if err := binary.Write(c.conn, binary.BigEndian, zeroes); err != nil {
@@ -440,8 +463,12 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 				}
 			}
 
-			c.export = export
-			done = true
+			if opt.NbdOptId != NBD_OPT_SELECT {
+				c.export = export
+				done = true
+			}
+		case NBD_OPT_ABORT:
+			return errors.New("Connection aborted by client")
 		default:
 			// eat the option
 			discard := make([]byte, opt.NbdOptLen, opt.NbdOptLen)
