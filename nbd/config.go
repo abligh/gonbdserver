@@ -66,9 +66,10 @@ type Config struct {
 
 // ServerConfig holds the config that applies to each server (i.e. listener)
 type ServerConfig struct {
-	Protocol string         // protocol it should listen on (in net.Conn form)
-	Address  string         // address to listen on
-	Exports  []ExportConfig // array of configurations of exported items
+	Protocol      string         // protocol it should listen on (in net.Conn form)
+	Address       string         // address to listen on
+	DefaultExport string         // name of default export
+	Exports       []ExportConfig // array of configurations of exported items
 }
 
 // ExportConfig holds the config for one exported item
@@ -239,7 +240,7 @@ func StartServer(parentCtx context.Context, sessionParentCtx context.Context, se
 
 	logger.Printf("[INFO] Starting server %s:%s", s.Protocol, s.Address)
 
-	if l, err := NewListener(logger, s.Protocol, s.Address, s.Exports); err != nil {
+	if l, err := NewListener(logger, s.Protocol, s.Address, s.Exports, s.DefaultExport); err != nil {
 		logger.Printf("[ERROR] Could not create listener for %s:%s: %v", s.Protocol, s.Address, err)
 	} else {
 		l.Listen(ctx, sessionParentCtx, sessionWaitGroup)

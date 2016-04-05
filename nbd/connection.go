@@ -423,18 +423,20 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 
 			if opt.NbdOptId == NBD_OPT_SELECT {
 				c.selectName = string(name)
-			} else if len(name) == 0 {
+			} else if opt.NbdOptId == NBD_OPT_GO && len(name) == 0 {
 				name = []byte(c.selectName)
 			}
 
 			if len(name) == 0 {
-				return errors.New("No selected export specified")
+				name = []byte(c.listener.defaultExport)
 			}
 
 			export, err := c.getExport(ctx, string(name))
 			if err != nil {
 				return err // TODO: return NBD_REP_ERR_UNSUP instead?
 			}
+			// for the reply
+			name = []byte(export.name)
 
 			if opt.NbdOptId != NBD_OPT_EXPORT_NAME {
 				nameLength := uint32(len(name))

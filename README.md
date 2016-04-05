@@ -113,6 +113,7 @@ Each `server` item consists of the following:
 * `protocol:` a description of the protocol it should listen. Valid values are `tcp`, `tcp4` (TCP on IPv4 only), `tcp6` (TCP on IPv6 ony), or `unix`. Optional, defaults to `tcp`.
 * `address:` the address to listen on. For TCP protocols, this takes the form `address:port` in the normal manner. For UNIX protocols, this is the path to a Unix domain socket. Mandatory.
 * `exports:` a list of zero or more `export` items each representing an export to be served by this server. This section is optional (and can be empty), but the server will be of little use if so.
+* `defaultexport:` the name of the default export, which should be selected if no name is specified by the client. Optional, defaults to none.
 
 #### `export` items
 

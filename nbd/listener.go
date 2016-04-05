@@ -10,10 +10,11 @@ import (
 
 // A single listener on a given net.Conn address
 type Listener struct {
-	logger   *log.Logger    // a logger
-	protocol string         // the protocol we are listening on
-	addr     string         // the address
-	exports  []ExportConfig // a list of export configurations associated
+	logger        *log.Logger    // a logger
+	protocol      string         // the protocol we are listening on
+	addr          string         // the address
+	exports       []ExportConfig // a list of export configurations associated
+	defaultExport string         // name of default export
 }
 
 // An listener type that does what we want
@@ -92,12 +93,13 @@ func (l *Listener) Listen(parentCtx context.Context, sessionParentCtx context.Co
 }
 
 // NewListener returns a new listener object
-func NewListener(logger *log.Logger, protocol string, addr string, exports []ExportConfig) (*Listener, error) {
+func NewListener(logger *log.Logger, protocol string, addr string, exports []ExportConfig, defaultExport string) (*Listener, error) {
 	l := &Listener{
-		logger:   logger,
-		protocol: protocol,
-		addr:     addr,
-		exports:  exports,
+		logger:        logger,
+		protocol:      protocol,
+		addr:          addr,
+		exports:       exports,
+		defaultExport: defaultExport,
 	}
 	return l, nil
 }
