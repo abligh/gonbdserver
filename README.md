@@ -12,9 +12,12 @@ Features
 
 * **Multithreaded**. Defaults to 5 worker threads per connection, so able to
   process requests in parallel.
+  
+* **Ceph RBD support**. Almost entirely untested.
 
-* **Pluggable backends**. By default a file backend is provided, but it would
-  be possible to supply any backend.
+* **Pluggable backends**. By default a file backend is provided, as well as
+  a Ceph/RBD backend on linux, but it would be possible to supply any backend.
+  The ceph driver is there mostly to illustrate just how easy this is.
 
 * **Reloadable configuration**. It is possible to reload the configuration
   using `SIGHUP` without affecting existing servers.
@@ -82,8 +85,7 @@ servers:
   - name: bar                    # The second export is called 'bar'
     readonly: true               # This is readonly
     driver: rbd                  # And uses the (currently imaginary) rbd driver
-    rdbname: rbdbar              # on this rados block device name
-    timeout: 5s                  # imaginary extra parameter for RDB
+    image: rbdbar                # on this rados block device name
 - protocol: unix                 # Another server uses UNIX
   address: /var/run/nbd.sock     # served on this socket
   exports:                       # it has one export
@@ -126,6 +128,15 @@ The `file` driver reads the disk from a file on the host OS's disks. It has the 
 
 * `path:` path to the file. Mandatory.
 * `sync:` set to `true` to open the file with `O_SYNC`, else to `false`. Optional, defaults to `false`.
+
+The `rbd` driver reads the disk from Ceph. It relies on your `ceph.conf` file being set up correctly, and has the following options:
+
+* `image:` RBD name of image. Mandatory.
+* `pool:` RBD pool for image. Optional, defaults to `rbd`.
+* `cluster:` ceph cluster name. Defaults to `ceph`.
+* `user:` ceph user name. Defaults to `client.admin`.
+
+*Note this driver is almost entirely untested*
 
 #### `logging` item
 

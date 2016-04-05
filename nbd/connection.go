@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -504,4 +505,15 @@ func (c *Connection) getExport(ctx context.Context, name string) (*Export, error
 
 func RegisterBackend(name string, generator func(ctx context.Context, e *ExportConfig) (Backend, error)) {
 	BackendMap[name] = generator
+}
+
+func GetBackendNames() []string {
+	b := make([]string, len(BackendMap))
+	i := 0
+	for k, _ := range BackendMap {
+		b[i] = k
+		i++
+	}
+	sort.Strings(b)
+	return b
 }

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 )
@@ -327,7 +328,7 @@ func RunConfig() {
 				logger = nlogger
 				logCloser = nlogCloser
 			}
-			logger.Println("[INFO] Loaded configuration")
+			logger.Printf("[INFO] Loaded configuration. Available backends: %s.", strings.Join(GetBackendNames(), ", "))
 			for _, s := range c.Servers {
 				s := s // localise loop variable
 				go func() {
