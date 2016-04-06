@@ -2,16 +2,13 @@ package nbd
 
 import (
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"golang.org/x/net/context"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -162,7 +159,11 @@ func (c *Connection) Receive(ctx context.Context) {
 				// Don't report this - we closed it
 				return
 			}
-			c.logger.Printf("[ERROR] Client %s could not read request: %s", c.name, err)
+			if err == io.EOF {
+				c.logger.Printf("[WARN] Client %s closed connection abruptly", c.name)
+			} else {
+				c.logger.Printf("[ERROR] Client %s could not read request: %s", c.name, err)
+			}
 			return
 		}
 
@@ -556,13 +557,9 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 				return errors.New("Cannot send list ack")
 			}
 		case NBD_OPT_STARTTLS:
-			tlsConfig, err := c.getTlsConfig(ctx)
-			if err != nil && c.listener.tls.KeyFile != "" { // only error if they've attempted to specify TLS
-				c.logger.Printf("[ERROR] TLS setup failed for %s: %s", c.name, err)
-				// fall through to say unsupported
-			}
-			if err != nil || tlsConfig == nil || c.tlsConn != nil {
+			if c.listener.tlsconfig == nil || c.tlsConn != nil {
 				// say it's unsuppported
+				c.logger.Printf("[INFO] Rejecting upgrade of connection with %s to TLS", c.name)
 				or := nbdOptReply{
 					NbdOptReplyMagic:  NBD_REP_MAGIC,
 					NbdOptId:          opt.NbdOptId,
@@ -587,7 +584,7 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 				}
 				c.logger.Printf("[INFO] Upgrading connection with %s to TLS", c.name)
 				// switch over to TLS
-				tls := tls.Server(c.conn, tlsConfig)
+				tls := tls.Server(c.conn, c.listener.tlsconfig)
 				c.tlsConn = tls
 				c.conn = tls
 				// explicitly handshake so we get an error here if there is an issue
@@ -661,72 +658,6 @@ func (c *Connection) connectExport(ctx context.Context, ec *ExportConfig) (*Expo
 			}, nil
 		}
 	}
-}
-
-// make an appropriate TLS config
-func (c *Connection) getTlsConfig(ctx context.Context) (*tls.Config, error) {
-	keyFile := c.listener.tls.KeyFile
-	certFile := c.listener.tls.CertFile
-	if certFile == "" {
-		certFile = keyFile
-	}
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		return nil, err
-	}
-
-	var clientCAs *x509.CertPool
-	if c.listener.tls.CaCertFile != "" {
-		clientCAs = x509.NewCertPool()
-		clientCAbytes, err := ioutil.ReadFile(c.listener.tls.CaCertFile)
-		if err != nil {
-			return nil, err
-		}
-		if ok := clientCAs.AppendCertsFromPEM(clientCAbytes); !ok {
-			return nil, errors.New("Could not append CA certficates from PEM file")
-		}
-	}
-
-	serverName := c.listener.tls.ServerName
-	if serverName == "" {
-		serverName, err = os.Hostname()
-		if err != nil {
-			return nil, err
-		}
-	}
-	var minVersion uint16
-	var maxVersion uint16
-	var ok bool
-	if c.listener.tls.MinVersion != "" {
-		minVersion, ok = tlsVersionMap[strings.ToLower(c.listener.tls.MinVersion)]
-		if !ok {
-			return nil, fmt.Errorf("Bad minimum TLS version: '%s'", c.listener.tls.MinVersion)
-		}
-	}
-	if c.listener.tls.MaxVersion != "" {
-		minVersion, ok = tlsVersionMap[strings.ToLower(c.listener.tls.MaxVersion)]
-		if !ok {
-			return nil, fmt.Errorf("Bad minimum TLS version: '%s'", c.listener.tls.MaxVersion)
-		}
-	}
-
-	var clientAuth tls.ClientAuthType
-	if c.listener.tls.ClientAuth != "" {
-		clientAuth, ok = tlsClientAuthMap[strings.ToLower(c.listener.tls.ClientAuth)]
-		if !ok {
-			return nil, fmt.Errorf("Bad TLS client auth type: '%s'", c.listener.tls.ClientAuth)
-		}
-	}
-
-	cfg := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		ServerName:   serverName,
-		ClientAuth:   clientAuth,
-		ClientCAs:    clientCAs,
-		MinVersion:   minVersion,
-		MaxVersion:   maxVersion,
-	}
-	return cfg, nil
 }
 
 func RegisterBackend(name string, generator func(ctx context.Context, e *ExportConfig) (Backend, error)) {

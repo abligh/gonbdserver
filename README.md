@@ -15,6 +15,8 @@ Features
   
 * **Ceph RBD support**. Almost entirely untested.
 
+* **TLS support**. With client certificates if required.
+
 * **Pluggable backends**. By default a file backend is provided, as well as
   a Ceph/RBD backend on linux, but it would be possible to supply any backend.
   The ceph driver is there mostly to illustrate just how easy this is.
@@ -86,6 +88,13 @@ servers:
     readonly: true               # This is readonly
     driver: rbd                  # And uses the (currently imaginary) rbd driver
     image: rbdbar                # on this rados block device name
+    tlsonly: true                # require TLS on this device
+  tls:                           # use the following certificates
+    keyfile: /path/to/server-key.pem
+    certfile: /path/to/server-cert.pem
+    cacertfile: /path/to/ca-cert.pem
+    servername: foo.example.com  # present the server name as 'foo.example.com'
+    clientauth: requireverify    # require and verify client certificates
 - protocol: unix                 # Another server uses UNIX
   address: /var/run/nbd.sock     # served on this socket
   exports:                       # it has one export

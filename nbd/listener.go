@@ -1,9 +1,16 @@
 package nbd
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"fmt"
 	"golang.org/x/net/context"
+	"io/ioutil"
 	"log"
 	"net"
+	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -16,6 +23,7 @@ type Listener struct {
 	exports       []ExportConfig // a list of export configurations associated
 	defaultExport string         // name of default export
 	tls           TlsConfig      // the TLS configuration
+	tlsconfig     *tls.Config    // the TLS configuration
 }
 
 // An listener type that does what we want
@@ -93,6 +101,75 @@ func (l *Listener) Listen(parentCtx context.Context, sessionParentCtx context.Co
 
 }
 
+// make an appropriate TLS config
+func (l *Listener) initTls() error {
+	keyFile := l.tls.KeyFile
+	if keyFile == "" {
+		return nil // no TLS
+	}
+	certFile := l.tls.CertFile
+	if certFile == "" {
+		certFile = keyFile
+	}
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return err
+	}
+
+	var clientCAs *x509.CertPool
+	if l.tls.CaCertFile != "" {
+		clientCAs = x509.NewCertPool()
+		clientCAbytes, err := ioutil.ReadFile(l.tls.CaCertFile)
+		if err != nil {
+			return err
+		}
+		if ok := clientCAs.AppendCertsFromPEM(clientCAbytes); !ok {
+			return errors.New("Could not append CA certficates from PEM file")
+		}
+	}
+
+	serverName := l.tls.ServerName
+	if serverName == "" {
+		serverName, err = os.Hostname()
+		if err != nil {
+			return err
+		}
+	}
+	var minVersion uint16
+	var maxVersion uint16
+	var ok bool
+	if l.tls.MinVersion != "" {
+		minVersion, ok = tlsVersionMap[strings.ToLower(l.tls.MinVersion)]
+		if !ok {
+			return fmt.Errorf("Bad minimum TLS version: '%s'", l.tls.MinVersion)
+		}
+	}
+	if l.tls.MaxVersion != "" {
+		minVersion, ok = tlsVersionMap[strings.ToLower(l.tls.MaxVersion)]
+		if !ok {
+			return fmt.Errorf("Bad maximum TLS version: '%s'", l.tls.MaxVersion)
+		}
+	}
+
+	var clientAuth tls.ClientAuthType
+	if l.tls.ClientAuth != "" {
+		clientAuth, ok = tlsClientAuthMap[strings.ToLower(l.tls.ClientAuth)]
+		if !ok {
+			return fmt.Errorf("Bad TLS client auth type: '%s'", l.tls.ClientAuth)
+		}
+	}
+
+	l.tlsconfig = &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		ServerName:   serverName,
+		ClientAuth:   clientAuth,
+		ClientCAs:    clientCAs,
+		MinVersion:   minVersion,
+		MaxVersion:   maxVersion,
+	}
+	return nil
+}
+
 // NewListener returns a new listener object
 func NewListener(logger *log.Logger, s ServerConfig) (*Listener, error) {
 	l := &Listener{
@@ -102,6 +179,9 @@ func NewListener(logger *log.Logger, s ServerConfig) (*Listener, error) {
 		exports:       s.Exports,
 		defaultExport: s.DefaultExport,
 		tls:           s.Tls,
+	}
+	if err := l.initTls(); err != nil {
+		return nil, err
 	}
 	return l, nil
 }
