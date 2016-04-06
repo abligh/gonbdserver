@@ -469,6 +469,35 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 				c.export = export
 				done = true
 			}
+		case NBD_OPT_LIST:
+			for _, e := range c.listener.exports {
+				name := []byte(e.Name)
+				or := nbdOptReply{
+					NbdOptReplyMagic:  NBD_REP_MAGIC,
+					NbdOptId:          opt.NbdOptId,
+					NbdOptReplyType:   NBD_REP_SERVER,
+					NbdOptReplyLength: uint32(len(name) + 4),
+				}
+				if err := binary.Write(c.conn, binary.BigEndian, or); err != nil {
+					return errors.New("Cannot send list item")
+				}
+				l := uint32(len(name))
+				if err := binary.Write(c.conn, binary.BigEndian, l); err != nil {
+					return errors.New("Cannot send list name length")
+				}
+				if n, err := c.conn.Write(name); err != nil || n != len(name) {
+					return errors.New("Cannot send list name")
+				}
+			}
+			or := nbdOptReply{
+				NbdOptReplyMagic:  NBD_REP_MAGIC,
+				NbdOptId:          opt.NbdOptId,
+				NbdOptReplyType:   NBD_REP_ACK,
+				NbdOptReplyLength: 0,
+			}
+			if err := binary.Write(c.conn, binary.BigEndian, or); err != nil {
+				return errors.New("Cannot send list ack")
+			}
 		case NBD_OPT_ABORT:
 			return errors.New("Connection aborted by client")
 		default:
