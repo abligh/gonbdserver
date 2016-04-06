@@ -70,6 +70,7 @@ type ServerConfig struct {
 	Address       string         // address to listen on
 	DefaultExport string         // name of default export
 	Exports       []ExportConfig // array of configurations of exported items
+	Tls           TlsConfig      // TLS configuration
 }
 
 // ExportConfig holds the config for one exported item
@@ -78,7 +79,19 @@ type ExportConfig struct {
 	Driver           string                 // name of the driver
 	ReadOnly         bool                   // true of the export should be opened readonly
 	Workers          int                    // number of concurrent workers
+	TlsOnly          bool                   // true if the export should only be served over TLS
 	DriverParameters DriverParametersConfig `yaml:",inline"` // driver parameters. These are an arbitrary map. Inline means they go aside teh foregoing
+}
+
+// TlsConfig has the configuration for TLS
+type TlsConfig struct {
+	KeyFile    string // path to TLS key file
+	CertFile   string // path to TLS cert file
+	ServerName string // server name
+	CaCertFile string // path to certificate file
+	ClientAuth string // client authentication strategy
+	MinVersion string // minimum TLS version
+	MaxVersion string // maximum TLS version
 }
 
 // DriverConfig is an arbitrary map of other parameters in string format
@@ -240,7 +253,7 @@ func StartServer(parentCtx context.Context, sessionParentCtx context.Context, se
 
 	logger.Printf("[INFO] Starting server %s:%s", s.Protocol, s.Address)
 
-	if l, err := NewListener(logger, s.Protocol, s.Address, s.Exports, s.DefaultExport); err != nil {
+	if l, err := NewListener(logger, s); err != nil {
 		logger.Printf("[ERROR] Could not create listener for %s:%s: %v", s.Protocol, s.Address, err)
 	} else {
 		l.Listen(ctx, sessionParentCtx, sessionWaitGroup)

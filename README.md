@@ -114,6 +114,7 @@ Each `server` item consists of the following:
 * `address:` the address to listen on. For TCP protocols, this takes the form `address:port` in the normal manner. For UNIX protocols, this is the path to a Unix domain socket. Mandatory.
 * `exports:` a list of zero or more `export` items each representing an export to be served by this server. This section is optional (and can be empty), but the server will be of little use if so.
 * `defaultexport:` the name of the default export, which should be selected if no name is specified by the client. Optional, defaults to none.
+* `tls:` a TLS item
 
 #### `export` items
 
@@ -124,6 +125,7 @@ Each `export` item consists of the following (common to all drivers):
 * `driver:` the driver. Currently valid drivers are: `file`. Mandatory.
 * `readonly:` set to `true` for readonly, `false` otherwise. Optional, defaults to `false`.
 * `workers:` the number of simultaneous worker threads. Optional, defaults to 5.
+* `tlsonly:` set to `true` if the export is only to be provided over TLS, `false` otherwise. Optional, defaults to `false`
 
 The `file` driver reads the disk from a file on the host OS's disks. It has the following options:
 
@@ -137,7 +139,19 @@ The `rbd` driver reads the disk from Ceph. It relies on your `ceph.conf` file be
 * `cluster:` ceph cluster name. Defaults to `ceph`.
 * `user:` ceph user name. Defaults to `client.admin`.
 
-*Note this driver is almost entirely untested*
+*Note the Ceph driver is almost entirely untested*
+
+#### `tls` item
+
+The `tls` item is used to enable TLS encryption on a server. If TLS is enabled on a server, the exports will be available over TLS. To make individual exports available *only* over TLS, add `tlsonly: true` to the export
+
+* `keyfile:` Path to TLS key file in PEM format. Mandatory.
+* `certfile:` Path to TLS cert file in PEM format. Optional, if not provided, defaults to `KeyFile` and assumes the PEM at `keyfile` has the certificate in as well as the private key.
+* `servername:` Server name as announced by TLS. Optional, if not provided defaults to host name.
+* `cacertfile:` Path to a file containing one or more CA certificates in PEM format. Optional, but required if validating client certificates
+* `clientauth:` Client authentication strategy. Optional, defaulting to `none`. Must be one of the following values: `none` (no client certificate is requested or verified), `request` (a client certificate is requested but not verified), `require` (a client certificate is requested and required, but not verified), `verify` (a client certificate is requested and if provided is verified), or `requireverify` (a client certificate is requested and required, then verified)
+* `minversion:` minimum TLS version. Optional, defaults to no minimum version. Must be one of the following values: `ssl3.0`, `tls1.0`, `tls1.1` or `tls1.2`.
+* `maxversion:` maximum TLS version. Optional, defaults to no maximum version. Must be one of the following values: `ssl3.0`, `tls1.0`, `tls1.1` or `tls1.2`.
 
 #### `logging` item
 

@@ -1,13 +1,17 @@
 package nbd
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"golang.org/x/net/context"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -17,6 +21,23 @@ import (
 // Default number of workers
 var DefaultWorkers = 5
 
+// Map of configuration text to TLS versions
+var tlsVersionMap = map[string]uint16{
+	"ssl3.0": tls.VersionSSL30,
+	"tls1.0": tls.VersionTLS10,
+	"tls1.1": tls.VersionTLS11,
+	"tls1.2": tls.VersionTLS12,
+}
+
+// Map of configuration text to TLS authentication strategies
+var tlsClientAuthMap = map[string]tls.ClientAuthType{
+	"none":          tls.NoClientCert,
+	"request":       tls.RequestClientCert,
+	"require":       tls.RequireAnyClientCert,
+	"verify":        tls.VerifyClientCertIfGiven,
+	"requireverify": tls.RequireAndVerifyClientCert,
+}
+
 // ConnectionParameters holds parameters for each inbound connection
 type ConnectionParameters struct {
 	ConnectionTimeout time.Duration // maximum time to complete negotiation
@@ -25,7 +46,9 @@ type ConnectionParameters struct {
 // Connection holds the details for each connection
 type Connection struct {
 	params     *ConnectionParameters // parameters
-	conn       net.Conn              // the underlying connection
+	conn       net.Conn              // the connection that is used as the NBD transport
+	plainConn  net.Conn              // the unencrypted (original) connection
+	tlsConn    net.Conn              // the TLS encrypted connection
 	logger     *log.Logger           // a logger
 	listener   *Listener             // the listener than invoked us
 	export     *Export               // a pointer to the export
@@ -61,6 +84,7 @@ type Export struct {
 	name        string // name of the export
 	readonly    bool   // true if read only
 	workers     int    // number of workers
+	tlsonly     bool   // true if only to be served over tls
 }
 
 // Request is an internal structure for propagating requests through the channels
@@ -80,10 +104,10 @@ func newConnection(listener *Listener, logger *log.Logger, conn net.Conn) (*Conn
 		ConnectionTimeout: time.Second * 5,
 	}
 	c := &Connection{
-		conn:     conn,
-		listener: listener,
-		logger:   logger,
-		params:   params,
+		plainConn: conn,
+		listener:  listener,
+		logger:    logger,
+		params:    params,
 	}
 	return c, nil
 }
@@ -330,13 +354,17 @@ func (c *Connection) Serve(parentCtx context.Context) {
 	c.txCh = make(chan Request, 1024)
 	c.killCh = make(chan struct{})
 
-	c.name = c.conn.RemoteAddr().String()
+	c.conn = c.plainConn
+	c.name = c.plainConn.RemoteAddr().String()
 
 	defer func() {
 		if c.backend != nil {
 			c.backend.Close(ctx)
 		}
-		c.conn.Close()
+		if c.tlsConn != nil {
+			c.tlsConn.Close()
+		}
+		c.plainConn.Close()
 		cancelFunc()
 		c.Kill(ctx) // to ensure the kill channel is closed
 		c.wg.Wait()
@@ -431,10 +459,39 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 				name = []byte(c.listener.defaultExport)
 			}
 
-			export, err := c.getExport(ctx, string(name))
-			if err != nil {
-				return err // TODO: return NBD_REP_ERR_UNSUP instead?
+			// Next find our export
+			ec, err := c.getExportConfig(ctx, string(name))
+			if err != nil || (ec.TlsOnly && c.tlsConn == nil) {
+				if opt.NbdOptId == NBD_OPT_EXPORT_NAME {
+					// we have to just abort here
+					if err != nil {
+						return err
+					}
+					return errors.New("Attempt to connect to TLS-only connectoin without TLS")
+				}
+				or := nbdOptReply{
+					NbdOptReplyMagic:  NBD_REP_MAGIC,
+					NbdOptId:          opt.NbdOptId,
+					NbdOptReplyType:   NBD_REP_ERR_UNKNOWN,
+					NbdOptReplyLength: 0,
+				}
+				if err == nil {
+					or.NbdOptReplyType = NBD_REP_ERR_TLS_REQD
+				}
+				if err := binary.Write(c.conn, binary.BigEndian, or); err != nil {
+					return errors.New("Cannot send list ack")
+				}
+				break
 			}
+
+			// Now we know we are going to go with the export for sure
+			// any failure beyond here and we are going to drop the
+			// connection
+			export, err := c.connectExport(ctx, ec)
+			if err != nil {
+				return err
+			}
+
 			// for the reply
 			name = []byte(export.name)
 
@@ -498,6 +555,46 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 			if err := binary.Write(c.conn, binary.BigEndian, or); err != nil {
 				return errors.New("Cannot send list ack")
 			}
+		case NBD_OPT_STARTTLS:
+			tlsConfig, err := c.getTlsConfig(ctx)
+			if err != nil && c.listener.tls.KeyFile != "" { // only error if they've attempted to specify TLS
+				c.logger.Printf("[ERROR] TLS setup failed for %s: %s", c.name, err)
+				// fall through to say unsupported
+			}
+			if err != nil || tlsConfig == nil || c.tlsConn != nil {
+				// say it's unsuppported
+				or := nbdOptReply{
+					NbdOptReplyMagic:  NBD_REP_MAGIC,
+					NbdOptId:          opt.NbdOptId,
+					NbdOptReplyType:   NBD_REP_ERR_UNSUP,
+					NbdOptReplyLength: 0,
+				}
+				if c.tlsConn != nil { // TLS is already negotiated
+					or.NbdOptReplyType = NBD_REP_ERR_INVALID
+				}
+				if err := binary.Write(c.conn, binary.BigEndian, or); err != nil {
+					return errors.New("Cannot reply to unsupported TLS option")
+				}
+			} else {
+				or := nbdOptReply{
+					NbdOptReplyMagic:  NBD_REP_MAGIC,
+					NbdOptId:          opt.NbdOptId,
+					NbdOptReplyType:   NBD_REP_ACK,
+					NbdOptReplyLength: 0,
+				}
+				if err := binary.Write(c.conn, binary.BigEndian, or); err != nil {
+					return errors.New("Cannot send TLS ack")
+				}
+				c.logger.Printf("[INFO] Upgrading connection with %s to TLS", c.name)
+				// switch over to TLS
+				tls := tls.Server(c.conn, tlsConfig)
+				c.tlsConn = tls
+				c.conn = tls
+				// explicitly handshake so we get an error here if there is an issue
+				if err := tls.Handshake(); err != nil {
+					return fmt.Errorf("TLS handshake failed: %s", err)
+				}
+			}
 		case NBD_OPT_ABORT:
 			return errors.New("Connection aborted by client")
 		default:
@@ -527,38 +624,109 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 	return nil
 }
 
-// getExport generates an export for a given name, choosing the specified backend
-func (c *Connection) getExport(ctx context.Context, name string) (*Export, error) {
-	for _, e := range c.listener.exports {
-		if e.Name == name {
-			if backendgen, ok := BackendMap[e.Driver]; !ok {
-				return nil, fmt.Errorf("No such driver %s", e.Driver)
-			} else {
-				if backend, err := backendgen(ctx, &e); err != nil {
-					return nil, err
-				} else {
-					size, err := backend.Size(ctx)
-					if err != nil {
-						backend.Close(ctx)
-						return nil, err
-					}
-					if c.backend != nil {
-						c.backend.Close(ctx)
-					}
-					c.backend = backend
-					return &Export{
-						size:        size,
-						exportFlags: NBD_FLAG_HAS_FLAGS | NBD_FLAG_SEND_FLUSH | NBD_FLAG_SEND_FUA | NBD_FLAG_SEND_WRITE_ZEROES,
-						name:        name,
-						readonly:    e.ReadOnly,
-						workers:     e.Workers,
-					}, nil
-
-				}
-			}
+// getExport generates an export for a given name
+func (c *Connection) getExportConfig(ctx context.Context, name string) (*ExportConfig, error) {
+	for _, ec := range c.listener.exports {
+		if ec.Name == name {
+			return &ec, nil
 		}
 	}
 	return nil, errors.New("No such export")
+}
+
+// connectExport generates an export for a given name, and connects to it using the chosen backend
+func (c *Connection) connectExport(ctx context.Context, ec *ExportConfig) (*Export, error) {
+	if backendgen, ok := BackendMap[strings.ToLower(ec.Driver)]; !ok {
+		return nil, fmt.Errorf("No such driver %s", ec.Driver)
+	} else {
+		if backend, err := backendgen(ctx, ec); err != nil {
+			return nil, err
+		} else {
+			size, err := backend.Size(ctx)
+			if err != nil {
+				backend.Close(ctx)
+				return nil, err
+			}
+			if c.backend != nil {
+				c.backend.Close(ctx)
+			}
+			c.backend = backend
+			return &Export{
+				size:        size,
+				exportFlags: NBD_FLAG_HAS_FLAGS | NBD_FLAG_SEND_FLUSH | NBD_FLAG_SEND_FUA | NBD_FLAG_SEND_WRITE_ZEROES,
+				name:        ec.Name,
+				readonly:    ec.ReadOnly,
+				workers:     ec.Workers,
+				tlsonly:     ec.TlsOnly,
+			}, nil
+		}
+	}
+}
+
+// make an appropriate TLS config
+func (c *Connection) getTlsConfig(ctx context.Context) (*tls.Config, error) {
+	keyFile := c.listener.tls.KeyFile
+	certFile := c.listener.tls.CertFile
+	if certFile == "" {
+		certFile = keyFile
+	}
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, err
+	}
+
+	var clientCAs *x509.CertPool
+	if c.listener.tls.CaCertFile != "" {
+		clientCAs = x509.NewCertPool()
+		clientCAbytes, err := ioutil.ReadFile(c.listener.tls.CaCertFile)
+		if err != nil {
+			return nil, err
+		}
+		if ok := clientCAs.AppendCertsFromPEM(clientCAbytes); !ok {
+			return nil, errors.New("Could not append CA certficates from PEM file")
+		}
+	}
+
+	serverName := c.listener.tls.ServerName
+	if serverName == "" {
+		serverName, err = os.Hostname()
+		if err != nil {
+			return nil, err
+		}
+	}
+	var minVersion uint16
+	var maxVersion uint16
+	var ok bool
+	if c.listener.tls.MinVersion != "" {
+		minVersion, ok = tlsVersionMap[strings.ToLower(c.listener.tls.MinVersion)]
+		if !ok {
+			return nil, fmt.Errorf("Bad minimum TLS version: '%s'", c.listener.tls.MinVersion)
+		}
+	}
+	if c.listener.tls.MaxVersion != "" {
+		minVersion, ok = tlsVersionMap[strings.ToLower(c.listener.tls.MaxVersion)]
+		if !ok {
+			return nil, fmt.Errorf("Bad minimum TLS version: '%s'", c.listener.tls.MaxVersion)
+		}
+	}
+
+	var clientAuth tls.ClientAuthType
+	if c.listener.tls.ClientAuth != "" {
+		clientAuth, ok = tlsClientAuthMap[strings.ToLower(c.listener.tls.ClientAuth)]
+		if !ok {
+			return nil, fmt.Errorf("Bad TLS client auth type: '%s'", c.listener.tls.ClientAuth)
+		}
+	}
+
+	cfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		ServerName:   serverName,
+		ClientAuth:   clientAuth,
+		ClientCAs:    clientCAs,
+		MinVersion:   minVersion,
+		MaxVersion:   maxVersion,
+	}
+	return cfg, nil
 }
 
 func RegisterBackend(name string, generator func(ctx context.Context, e *ExportConfig) (Backend, error)) {

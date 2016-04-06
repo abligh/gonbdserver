@@ -15,6 +15,7 @@ type Listener struct {
 	addr          string         // the address
 	exports       []ExportConfig // a list of export configurations associated
 	defaultExport string         // name of default export
+	tls           TlsConfig      // the TLS configuration
 }
 
 // An listener type that does what we want
@@ -93,13 +94,14 @@ func (l *Listener) Listen(parentCtx context.Context, sessionParentCtx context.Co
 }
 
 // NewListener returns a new listener object
-func NewListener(logger *log.Logger, protocol string, addr string, exports []ExportConfig, defaultExport string) (*Listener, error) {
+func NewListener(logger *log.Logger, s ServerConfig) (*Listener, error) {
 	l := &Listener{
 		logger:        logger,
-		protocol:      protocol,
-		addr:          addr,
-		exports:       exports,
-		defaultExport: defaultExport,
+		protocol:      s.Protocol,
+		addr:          s.Address,
+		exports:       s.Exports,
+		defaultExport: s.DefaultExport,
+		tls:           s.Tls,
 	}
 	return l, nil
 }
