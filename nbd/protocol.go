@@ -168,11 +168,12 @@ type nbdReply struct {
 
 // Our internal flags to characterize commands
 const (
-	CMDT_CHECK_LENGTH_OFFSET = 1 << iota // length and offset must be valid
-	CMDT_REQ_PAYLOAD                     // request carries a payload
-	CMDT_REQ_FAKE_PAYLOAD                // request does not carry a payload, but we'll make a zero payload up
-	CMDT_REP_PAYLOAD                     // reply carries a payload
-	CMDT_CHECK_NOT_READ_ONLY             // not valid on read-only media
+	CMDT_CHECK_LENGTH_OFFSET     = 1 << iota // length and offset must be valid
+	CMDT_REQ_PAYLOAD                         // request carries a payload
+	CMDT_REQ_FAKE_PAYLOAD                    // request does not carry a payload, but we'll make a zero payload up
+	CMDT_REP_PAYLOAD                         // reply carries a payload
+	CMDT_CHECK_NOT_READ_ONLY                 // not valid on read-only media
+	CMTD_SET_DISCONNECT_RECEIVED             // a disconnect - don't process any further commands
 )
 
 // A map specifying each command

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -42,19 +43,21 @@ type ConnectionParameters struct {
 
 // Connection holds the details for each connection
 type Connection struct {
-	params     *ConnectionParameters // parameters
-	conn       net.Conn              // the connection that is used as the NBD transport
-	plainConn  net.Conn              // the unencrypted (original) connection
-	tlsConn    net.Conn              // the TLS encrypted connection
-	logger     *log.Logger           // a logger
-	listener   *Listener             // the listener than invoked us
-	export     *Export               // a pointer to the export
-	backend    Backend               // the backend implementation
-	wg         sync.WaitGroup        // a waitgroup for the session; we mark this as done on exit
-	rxCh       chan Request          // a channel of requests that have been received, and need to be dispatched to a worker
-	txCh       chan Request          // a channel of outputs from the worker. By this time they have replies in that need to be transmitted
-	name       string                // the name of the connection for logging purposes
-	selectName string                // the selected export name
+	params             *ConnectionParameters // parameters
+	conn               net.Conn              // the connection that is used as the NBD transport
+	plainConn          net.Conn              // the unencrypted (original) connection
+	tlsConn            net.Conn              // the TLS encrypted connection
+	logger             *log.Logger           // a logger
+	listener           *Listener             // the listener than invoked us
+	export             *Export               // a pointer to the export
+	backend            Backend               // the backend implementation
+	wg                 sync.WaitGroup        // a waitgroup for the session; we mark this as done on exit
+	rxCh               chan Request          // a channel of requests that have been received, and need to be dispatched to a worker
+	txCh               chan Request          // a channel of outputs from the worker. By this time they have replies in that need to be transmitted
+	name               string                // the name of the connection for logging purposes
+	selectName         string                // the selected export name
+	disconnectReceived int64                 // nonzero if disconnect has been received
+	numInflight        int64                 // number of inflight requests
 
 	killCh    chan struct{} // closed by workers to indicate a hard close is required
 	killed    bool          // true if killCh closed already
@@ -185,6 +188,13 @@ func (c *Connection) Receive(ctx context.Context) {
 			return
 		}
 
+		if req.flags&CMTD_SET_DISCONNECT_RECEIVED != 0 {
+			// we process this here as commands may otherwise be processed out
+			// of order and per the spec we should not receive any more
+			// commands after receiving a disconnect
+			atomic.StoreInt64(&c.disconnectReceived, 1)
+		}
+
 		if req.flags&CMDT_CHECK_LENGTH_OFFSET != 0 {
 			req.length = int(req.nbdReq.NbdLength)
 			req.offset = int64(req.nbdReq.NbdOffset)
@@ -224,6 +234,7 @@ func (c *Connection) Receive(ctx context.Context) {
 			req.repData = make([]byte, req.length, req.length)
 		}
 
+		atomic.AddInt64(&c.numInflight, 1) // one more in flight
 		if req.flags&CMDT_CHECK_NOT_READ_ONLY != 0 && c.export.readonly {
 			req.nbdRep.NbdError = NBD_EPERM
 			select {
@@ -238,7 +249,14 @@ func (c *Connection) Receive(ctx context.Context) {
 				return
 			}
 		}
-
+		// if we've recieved a disconnect, just sit waiting for the
+		// context to indicate we've done
+		if atomic.LoadInt64(&c.disconnectReceived) > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			}
+		}
 	}
 }
 
@@ -303,6 +321,7 @@ func (c *Connection) Dispatch(ctx context.Context, n int) {
 					req.nbdRep.NbdError = NBD_EIO
 				}
 			case NBD_CMD_DISC:
+				c.waitForInflight(ctx, 1) // this request is itself in flight, so 1 is permissible
 				c.logger.Printf("[INFO] Client %s requested disconnect", c.name)
 				return
 			default:
@@ -315,6 +334,20 @@ func (c *Connection) Dispatch(ctx context.Context, n int) {
 				return
 			}
 		}
+	}
+}
+
+func (c *Connection) waitForInflight(ctx context.Context, limit int64) {
+	c.logger.Printf("[INFO] Client %s waiting for inflight requests prior to disconnect", c.name)
+	for {
+		if atomic.LoadInt64(&c.numInflight) <= limit {
+			return
+		}
+		// this is pretty nasty in that it would be nicer to wait on
+		// a channel or use a (non-existent) waitgroup with timer.
+		// however it's only one atomic read every 10ms and this
+		// will hardly ever occur
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -343,6 +376,8 @@ func (c *Connection) Transmit(ctx context.Context) {
 					return
 				}
 			}
+			// TODO: with structured replies, only do this if the 'DONE' bit is set.
+			atomic.AddInt64(&c.numInflight, -1) // one less in flight
 		}
 	}
 }
