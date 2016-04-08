@@ -188,7 +188,7 @@ func (c *Connection) Receive(ctx context.Context) {
 			return
 		}
 
-		if req.flags&CMTD_SET_DISCONNECT_RECEIVED != 0 {
+		if req.flags&CMDT_SET_DISCONNECT_RECEIVED != 0 {
 			// we process this here as commands may otherwise be processed out
 			// of order and per the spec we should not receive any more
 			// commands after receiving a disconnect
@@ -322,7 +322,19 @@ func (c *Connection) Dispatch(ctx context.Context, n int) {
 				}
 			case NBD_CMD_DISC:
 				c.waitForInflight(ctx, 1) // this request is itself in flight, so 1 is permissible
+				c.backend.Flush(ctx)
 				c.logger.Printf("[INFO] Client %s requested disconnect", c.name)
+				return
+			case NBD_CMD_CLOSE:
+				c.waitForInflight(ctx, 1) // this request is itself in flight, so 1 is permissible
+				c.backend.Flush(ctx)
+				c.logger.Printf("[INFO] Client %s requested close", c.name)
+				select {
+				case c.txCh <- req:
+				case <-ctx.Done():
+				}
+				c.waitForInflight(ctx, 0) // wait for this request to be no longer inflight (i.e. reply transmitted)
+				c.logger.Printf("[INFO] Client %s close completed", c.name)
 				return
 			default:
 				c.logger.Printf("[ERROR] Client %s sent unknown command %d", c.name, req.nbdReq.NbdCommandType)
@@ -685,7 +697,7 @@ func (c *Connection) connectExport(ctx context.Context, ec *ExportConfig) (*Expo
 			c.backend = backend
 			return &Export{
 				size:        size,
-				exportFlags: NBD_FLAG_HAS_FLAGS | NBD_FLAG_SEND_FLUSH | NBD_FLAG_SEND_FUA | NBD_FLAG_SEND_WRITE_ZEROES,
+				exportFlags: NBD_FLAG_HAS_FLAGS | NBD_FLAG_SEND_FLUSH | NBD_FLAG_SEND_FUA | NBD_FLAG_SEND_WRITE_ZEROES | NBD_FLAG_SEND_CLOSE,
 				name:        ec.Name,
 				readonly:    ec.ReadOnly,
 				workers:     ec.Workers,

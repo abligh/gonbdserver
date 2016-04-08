@@ -16,6 +16,7 @@ const (
 	NBD_CMD_FLUSH        = 3
 	NBD_CMD_TRIM         = 4
 	NBD_CMD_WRITE_ZEROES = 5
+	NBD_CMD_CLOSE        = 7
 )
 
 // NBD command flags
@@ -35,6 +36,7 @@ const (
 	NBD_FLAG_SEND_TRIM         = 1 << 5
 	NBD_FLAG_SEND_WRITE_ZEROES = 1 << 6
 	NBD_FLAG_SEND_DF           = 1 << 7
+	NBD_FLAG_SEND_CLOSE        = 1 << 8
 )
 
 // NBD magic numbers
@@ -173,15 +175,16 @@ const (
 	CMDT_REQ_FAKE_PAYLOAD                    // request does not carry a payload, but we'll make a zero payload up
 	CMDT_REP_PAYLOAD                         // reply carries a payload
 	CMDT_CHECK_NOT_READ_ONLY                 // not valid on read-only media
-	CMTD_SET_DISCONNECT_RECEIVED             // a disconnect - don't process any further commands
+	CMDT_SET_DISCONNECT_RECEIVED             // a disconnect - don't process any further commands
 )
 
 // A map specifying each command
 var CmdTypeMap = map[int]uint64{
 	NBD_CMD_READ:         CMDT_CHECK_LENGTH_OFFSET | CMDT_REP_PAYLOAD,
 	NBD_CMD_WRITE:        CMDT_CHECK_LENGTH_OFFSET | CMDT_CHECK_NOT_READ_ONLY | CMDT_REQ_PAYLOAD,
-	NBD_CMD_DISC:         0,
+	NBD_CMD_DISC:         CMDT_SET_DISCONNECT_RECEIVED,
 	NBD_CMD_FLUSH:        CMDT_CHECK_NOT_READ_ONLY,
 	NBD_CMD_TRIM:         CMDT_CHECK_LENGTH_OFFSET | CMDT_CHECK_NOT_READ_ONLY,
 	NBD_CMD_WRITE_ZEROES: CMDT_CHECK_LENGTH_OFFSET | CMDT_CHECK_NOT_READ_ONLY | CMDT_REQ_FAKE_PAYLOAD,
+	NBD_CMD_CLOSE:        CMDT_SET_DISCONNECT_RECEIVED,
 }
