@@ -487,7 +487,7 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 			return errors.New("Bad option magic")
 		}
 		switch opt.NbdOptId {
-		case NBD_OPT_EXPORT_NAME, NBD_OPT_SELECT, NBD_OPT_GO:
+		case NBD_OPT_EXPORT_NAME, NBD_OPT_INFO, NBD_OPT_GO:
 			name := make([]byte, opt.NbdOptLen)
 			n, err := io.ReadFull(c.conn, name)
 			if err != nil {
@@ -497,7 +497,7 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 				return errors.New("Incomplete name")
 			}
 
-			if opt.NbdOptId == NBD_OPT_SELECT {
+			if opt.NbdOptId == NBD_OPT_INFO {
 				c.selectName = string(name)
 			} else if opt.NbdOptId == NBD_OPT_GO && len(name) == 0 {
 				name = []byte(c.selectName)
@@ -534,7 +534,7 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 
 			// Now we know we are going to go with the export for sure
 			// any failure beyond here and we are going to drop the
-			// connection
+			// connection (assuming we aren't doing NBD_OPT_INFO)
 			export, err := c.connectExport(ctx, ec)
 			if err != nil {
 				return err
@@ -562,15 +562,18 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 				return errors.New("Cannot write export details")
 			}
 
-			if clf.NbdClientFlags&NBD_FLAG_C_NO_ZEROES == 0 && opt.NbdOptId == NBD_OPT_EXPORT_NAME {
-				// send 124 bytes of zeroes.
-				zeroes := make([]byte, 124, 124)
-				if err := binary.Write(c.conn, binary.BigEndian, zeroes); err != nil {
-					return errors.New("Cannot write zeroes")
+			if opt.NbdOptId == NBD_OPT_INFO {
+				// Disassociate the backend as we are not closing
+				c.backend.Close(ctx)
+				c.backend = nil
+			} else {
+				if clf.NbdClientFlags&NBD_FLAG_C_NO_ZEROES == 0 && opt.NbdOptId == NBD_OPT_EXPORT_NAME {
+					// send 124 bytes of zeroes.
+					zeroes := make([]byte, 124, 124)
+					if err := binary.Write(c.conn, binary.BigEndian, zeroes); err != nil {
+						return errors.New("Cannot write zeroes")
+					}
 				}
-			}
-
-			if opt.NbdOptId != NBD_OPT_SELECT {
 				c.export = export
 				done = true
 			}

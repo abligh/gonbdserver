@@ -62,7 +62,7 @@ const (
 	NBD_OPT_LIST             = 3
 	NBD_OPT_PEEK_EXPORT      = 4
 	NBD_OPT_STARTTLS         = 5
-	NBD_OPT_SELECT           = 6
+	NBD_OPT_INFO             = 6
 	NBD_OPT_GO               = 7
 	NBD_OPT_STRUCTURED_REPLY = 8
 )
