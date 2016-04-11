@@ -131,6 +131,7 @@ Each `export` item represents an export (i.e. an NBD disk) to be served by the s
 
 Each `export` item consists of the following (common to all drivers):
 * `name:` the name of the export as served over NBD. Mandatory.
+* `description:` the human readable description of the export. Optional, defaults to an empty string.
 * `driver:` the driver. Currently valid drivers are: `file`. Mandatory.
 * `readonly:` set to `true` for readonly, `false` otherwise. Optional, defaults to `false`.
 * `workers:` the number of simultaneous worker threads. Optional, defaults to 5.

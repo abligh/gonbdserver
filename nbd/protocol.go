@@ -62,15 +62,17 @@ const (
 	NBD_OPT_LIST             = 3
 	NBD_OPT_PEEK_EXPORT      = 4
 	NBD_OPT_STARTTLS         = 5
-	NBD_OPT_SELECT           = 6
+	NBD_OPT_INFO             = 6
 	NBD_OPT_GO               = 7
 	NBD_OPT_STRUCTURED_REPLY = 8
+	NBD_OPT_BLOCK_SIZE       = 9
 )
 
 // NBD option reply types
 const (
 	NBD_REP_ACK    = 1
 	NBD_REP_SERVER = 2
+	NBD_REP_INFO   = 3
 )
 
 // NBD option reply types
@@ -114,6 +116,14 @@ const (
 	NBD_EINVAL    = 22
 	NBD_ENOSPC    = 28
 	NBD_EOVERFLOW = 75
+)
+
+// NBD info types
+const (
+	NBD_INFO_EXPORT      = 0
+	NBD_INFO_NAME        = 1
+	NBD_INFO_DESCRIPTION = 2
+	NBD_INFO_BLOCK_SIZE  = 3
 )
 
 // NBD new style header
@@ -164,6 +174,21 @@ type nbdReply struct {
 	NbdReplyMagic uint32
 	NbdError      uint32
 	NbdHandle     uint64
+}
+
+// NBD info export
+type nbdInfoExport struct {
+	NbdInfoType          uint16
+	NbdExportSize        uint64
+	NbdTransmissionFlags uint16
+}
+
+// NBD info blocksize
+type nbdInfoBlockSize struct {
+	NbdInfoType           uint16
+	NbdMinimumBlockSize   uint32
+	NbdPreferredBlockSize uint32
+	NbdMaximumBlockSize   uint32
 }
 
 /* --- END OF NBD PROTOCOL SECTION --- */

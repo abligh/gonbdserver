@@ -71,7 +71,7 @@ type Backend interface {
 	TrimAt(ctx context.Context, length int, offset int64) (int, error)          // trim
 	Flush(ctx context.Context) error                                            // flush
 	Close(ctx context.Context) error                                            // close
-	Size(ctx context.Context) (uint64, error)                                   // size
+	Geometry(ctx context.Context) (uint64, uint64, uint64, uint64, error)       // size, minimum BS, preferred BS, maximum BS
 }
 
 // BackendMap is a map between backends and the generator function for them
@@ -79,12 +79,16 @@ var BackendMap map[string]func(ctx context.Context, e *ExportConfig) (Backend, e
 
 // Details of an export
 type Export struct {
-	size        uint64 // size in bytes
-	exportFlags uint16 // export flags in NBD format
-	name        string // name of the export
-	readonly    bool   // true if read only
-	workers     int    // number of workers
-	tlsonly     bool   // true if only to be served over tls
+	size               uint64 // size in bytes
+	minimumBlockSize   uint64 // minimum block size
+	preferredBlockSize uint64 // preferred block size
+	maximumBlockSize   uint64 // maximum block size
+	exportFlags        uint16 // export flags in NBD format
+	name               string // name of the export
+	description        string // description of the export
+	readonly           bool   // true if read only
+	workers            int    // number of workers
+	tlsonly            bool   // true if only to be served over tls
 }
 
 // Request is an internal structure for propagating requests through the channels
@@ -476,6 +480,7 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 		return errors.New("Cannot read client flags")
 	}
 
+	respectsBlocksizes := false
 	done := false
 	// now we get options
 	for !done {
@@ -487,7 +492,7 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 			return errors.New("Bad option magic")
 		}
 		switch opt.NbdOptId {
-		case NBD_OPT_EXPORT_NAME, NBD_OPT_SELECT, NBD_OPT_GO:
+		case NBD_OPT_EXPORT_NAME, NBD_OPT_INFO, NBD_OPT_GO:
 			name := make([]byte, opt.NbdOptLen)
 			n, err := io.ReadFull(c.conn, name)
 			if err != nil {
@@ -497,7 +502,7 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 				return errors.New("Incomplete name")
 			}
 
-			if opt.NbdOptId == NBD_OPT_SELECT {
+			if opt.NbdOptId == NBD_OPT_INFO {
 				c.selectName = string(name)
 			} else if opt.NbdOptId == NBD_OPT_GO && len(name) == 0 {
 				name = []byte(c.selectName)
@@ -534,7 +539,7 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 
 			// Now we know we are going to go with the export for sure
 			// any failure beyond here and we are going to drop the
-			// connection
+			// connection (assuming we aren't doing NBD_OPT_INFO)
 			export, err := c.connectExport(ctx, ec)
 			if err != nil {
 				return err
@@ -542,35 +547,121 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 
 			// for the reply
 			name = []byte(export.name)
+			description := []byte(export.description)
 
-			if opt.NbdOptId != NBD_OPT_EXPORT_NAME {
-				nameLength := uint32(len(name))
-				if err := binary.Write(c.conn, binary.BigEndian, nameLength); err != nil {
-					return errors.New("Cannot write name length")
+			if opt.NbdOptId == NBD_OPT_EXPORT_NAME {
+				// this option has a unique reply format
+				ed := nbdExportDetails{
+					NbdExportSize:  export.size,
+					NbdExportFlags: export.exportFlags,
+				}
+				if err := binary.Write(c.conn, binary.BigEndian, ed); err != nil {
+					return errors.New("Cannot write export details")
+				}
+			} else {
+				// Warn if the c lient is trying to connect when it doesn't respect block sizes
+				if export.minimumBlockSize > 1 && !respectsBlocksizes && opt.NbdOptId == NBD_OPT_GO {
+					c.logger.Printf("[WARN] Client %s does not support block sizes but accessing export %s with minimum block size of %d",
+						c.name, export.name, export.minimumBlockSize)
+				}
+
+				// Send NBD_INFO_EXPORT
+				or := nbdOptReply{
+					NbdOptReplyMagic:  NBD_REP_MAGIC,
+					NbdOptId:          opt.NbdOptId,
+					NbdOptReplyType:   NBD_REP_INFO,
+					NbdOptReplyLength: 12,
+				}
+				if err := binary.Write(c.conn, binary.BigEndian, or); err != nil {
+					return errors.New("Cannot write info export pt1")
+				}
+				ir := nbdInfoExport{
+					NbdInfoType:          NBD_INFO_EXPORT,
+					NbdExportSize:        export.size,
+					NbdTransmissionFlags: export.exportFlags,
+				}
+				if err := binary.Write(c.conn, binary.BigEndian, ir); err != nil {
+					return errors.New("Cannot write info export pt2")
+				}
+
+				// Send NBD_INFO_NAME
+				or = nbdOptReply{
+					NbdOptReplyMagic:  NBD_REP_MAGIC,
+					NbdOptId:          opt.NbdOptId,
+					NbdOptReplyType:   NBD_REP_INFO,
+					NbdOptReplyLength: uint32(2 + len(name)),
+				}
+				if err := binary.Write(c.conn, binary.BigEndian, or); err != nil {
+					return errors.New("Cannot write info name pt1")
+				}
+				if err := binary.Write(c.conn, binary.BigEndian, uint16(NBD_INFO_NAME)); err != nil {
+					return errors.New("Cannot write name id")
 				}
 				if err := binary.Write(c.conn, binary.BigEndian, name); err != nil {
 					return errors.New("Cannot write name")
 				}
-			}
 
-			// this option has a unique reply format
-			ed := nbdExportDetails{
-				NbdExportSize:  export.size,
-				NbdExportFlags: export.exportFlags,
-			}
-			if err := binary.Write(c.conn, binary.BigEndian, ed); err != nil {
-				return errors.New("Cannot write export details")
-			}
+				// Send NBD_INFO_DESCRIPTION
+				or = nbdOptReply{
+					NbdOptReplyMagic:  NBD_REP_MAGIC,
+					NbdOptId:          opt.NbdOptId,
+					NbdOptReplyType:   NBD_REP_INFO,
+					NbdOptReplyLength: uint32(2 + len(description)),
+				}
+				if err := binary.Write(c.conn, binary.BigEndian, or); err != nil {
+					return errors.New("Cannot write info description pt1")
+				}
+				if err := binary.Write(c.conn, binary.BigEndian, uint16(NBD_INFO_DESCRIPTION)); err != nil {
+					return errors.New("Cannot write description id")
+				}
+				if err := binary.Write(c.conn, binary.BigEndian, description); err != nil {
+					return errors.New("Cannot write description")
+				}
 
-			if clf.NbdClientFlags&NBD_FLAG_C_NO_ZEROES == 0 && opt.NbdOptId == NBD_OPT_EXPORT_NAME {
-				// send 124 bytes of zeroes.
-				zeroes := make([]byte, 124, 124)
-				if err := binary.Write(c.conn, binary.BigEndian, zeroes); err != nil {
-					return errors.New("Cannot write zeroes")
+				// Send NBD_INFO_BLOCK_SIZE
+				or = nbdOptReply{
+					NbdOptReplyMagic:  NBD_REP_MAGIC,
+					NbdOptId:          opt.NbdOptId,
+					NbdOptReplyType:   NBD_REP_INFO,
+					NbdOptReplyLength: 14,
+				}
+				if err := binary.Write(c.conn, binary.BigEndian, or); err != nil {
+					return errors.New("Cannot write info block size pt1")
+				}
+				ir2 := nbdInfoBlockSize{
+					NbdInfoType:           NBD_INFO_BLOCK_SIZE,
+					NbdMinimumBlockSize:   uint32(export.minimumBlockSize),
+					NbdPreferredBlockSize: uint32(export.preferredBlockSize),
+					NbdMaximumBlockSize:   uint32(export.maximumBlockSize),
+				}
+				if err := binary.Write(c.conn, binary.BigEndian, ir2); err != nil {
+					return errors.New("Cannot write info block size pt2")
+				}
+
+				// Send ACK
+				or = nbdOptReply{
+					NbdOptReplyMagic:  NBD_REP_MAGIC,
+					NbdOptId:          opt.NbdOptId,
+					NbdOptReplyType:   NBD_REP_ACK,
+					NbdOptReplyLength: 0,
+				}
+				if err := binary.Write(c.conn, binary.BigEndian, or); err != nil {
+					return errors.New("Cannot info ack")
 				}
 			}
 
-			if opt.NbdOptId != NBD_OPT_SELECT {
+			if opt.NbdOptId == NBD_OPT_INFO {
+				// Disassociate the backend as we are not closing
+				c.backend.Close(ctx)
+				c.backend = nil
+			} else {
+				if clf.NbdClientFlags&NBD_FLAG_C_NO_ZEROES == 0 && opt.NbdOptId == NBD_OPT_EXPORT_NAME {
+					// send 124 bytes of zeroes.
+					zeroes := make([]byte, 124, 124)
+					if err := binary.Write(c.conn, binary.BigEndian, zeroes); err != nil {
+						return errors.New("Cannot write zeroes")
+					}
+				}
 				c.export = export
 				done = true
 			}
@@ -639,7 +730,27 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 					return fmt.Errorf("TLS handshake failed: %s", err)
 				}
 			}
+		case NBD_OPT_BLOCK_SIZE:
+			or := nbdOptReply{
+				NbdOptReplyMagic:  NBD_REP_MAGIC,
+				NbdOptId:          opt.NbdOptId,
+				NbdOptReplyType:   NBD_REP_ACK,
+				NbdOptReplyLength: 0,
+			}
+			respectsBlocksizes = true
+			if err := binary.Write(c.conn, binary.BigEndian, or); err != nil {
+				return errors.New("Cannot send block size ack")
+			}
 		case NBD_OPT_ABORT:
+			or := nbdOptReply{
+				NbdOptReplyMagic:  NBD_REP_MAGIC,
+				NbdOptId:          opt.NbdOptId,
+				NbdOptReplyType:   NBD_REP_ACK,
+				NbdOptReplyLength: 0,
+			}
+			if err := binary.Write(c.conn, binary.BigEndian, or); err != nil {
+				return errors.New("Cannot send abort ack")
+			}
 			return errors.New("Connection aborted by client")
 		default:
 			// eat the option
@@ -686,7 +797,7 @@ func (c *Connection) connectExport(ctx context.Context, ec *ExportConfig) (*Expo
 		if backend, err := backendgen(ctx, ec); err != nil {
 			return nil, err
 		} else {
-			size, err := backend.Size(ctx)
+			size, minimumBlockSize, preferredBlockSize, maximumBlockSize, err := backend.Geometry(ctx)
 			if err != nil {
 				backend.Close(ctx)
 				return nil, err
@@ -695,13 +806,18 @@ func (c *Connection) connectExport(ctx context.Context, ec *ExportConfig) (*Expo
 				c.backend.Close(ctx)
 			}
 			c.backend = backend
+			size = size & ^(minimumBlockSize - 1)
 			return &Export{
-				size:        size,
-				exportFlags: NBD_FLAG_HAS_FLAGS | NBD_FLAG_SEND_FLUSH | NBD_FLAG_SEND_FUA | NBD_FLAG_SEND_WRITE_ZEROES | NBD_FLAG_SEND_CLOSE,
-				name:        ec.Name,
-				readonly:    ec.ReadOnly,
-				workers:     ec.Workers,
-				tlsonly:     ec.TlsOnly,
+				size:               size,
+				exportFlags:        NBD_FLAG_HAS_FLAGS | NBD_FLAG_SEND_FLUSH | NBD_FLAG_SEND_FUA | NBD_FLAG_SEND_WRITE_ZEROES | NBD_FLAG_SEND_CLOSE,
+				name:               ec.Name,
+				readonly:           ec.ReadOnly,
+				workers:            ec.Workers,
+				tlsonly:            ec.TlsOnly,
+				description:        ec.Description,
+				minimumBlockSize:   minimumBlockSize,
+				preferredBlockSize: preferredBlockSize,
+				maximumBlockSize:   maximumBlockSize,
 			}, nil
 		}
 	}

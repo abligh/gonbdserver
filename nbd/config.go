@@ -76,6 +76,7 @@ type ServerConfig struct {
 // ExportConfig holds the config for one exported item
 type ExportConfig struct {
 	Name             string                 // name of the export
+	Description      string                 // description of export
 	Driver           string                 // name of the driver
 	ReadOnly         bool                   // true of the export should be opened readonly
 	Workers          int                    // number of concurrent workers
