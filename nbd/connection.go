@@ -206,6 +206,10 @@ func (c *Connection) Receive(ctx context.Context) {
 				c.logger.Printf("[ERROR] Client %s gave bad offset or length", c.name)
 				return
 			}
+			if uint64(req.length) & ^(c.export.minimumBlockSize-1) != 0 || uint64(req.offset) & ^(c.export.minimumBlockSize-1) != 0 || uint64(req.length) > c.export.maximumBlockSize {
+				c.logger.Printf("[ERROR] Client %s gave offset or length outside blocksize paramaters", c.name)
+				return
+			}
 		}
 
 		if req.flags&CMDT_REQ_PAYLOAD != 0 {
@@ -789,6 +793,18 @@ func (c *Connection) getExportConfig(ctx context.Context, name string) (*ExportC
 	return nil, errors.New("No such export")
 }
 
+// round a uint64 up to the next power of two
+func roundUpToNextPowerOfTwo(x uint64) uint64 {
+	var r uint64 = 1
+	for i := 0; i < 64; i++ {
+		if x <= r {
+			return r
+		}
+		r = r << 1
+	}
+	return 0 // won't fit in uint64 :-(
+}
+
 // connectExport generates an export for a given name, and connects to it using the chosen backend
 func (c *Connection) connectExport(ctx context.Context, ec *ExportConfig) (*Export, error) {
 	if backendgen, ok := BackendMap[strings.ToLower(ec.Driver)]; !ok {
@@ -806,6 +822,30 @@ func (c *Connection) connectExport(ctx context.Context, ec *ExportConfig) (*Expo
 				c.backend.Close(ctx)
 			}
 			c.backend = backend
+			if ec.MinimumBlockSize != 0 {
+				minimumBlockSize = ec.MinimumBlockSize
+			}
+			if ec.PreferredBlockSize != 0 {
+				preferredBlockSize = ec.PreferredBlockSize
+			}
+			if ec.MaximumBlockSize != 0 {
+				maximumBlockSize = ec.MaximumBlockSize
+			}
+			if minimumBlockSize == 0 {
+				minimumBlockSize = 1
+			}
+			minimumBlockSize = roundUpToNextPowerOfTwo(minimumBlockSize)
+			preferredBlockSize = roundUpToNextPowerOfTwo(preferredBlockSize)
+			// ensure preferredBlockSize is a multiple of the minimum block size
+			preferredBlockSize = preferredBlockSize & ^(minimumBlockSize - 1)
+			if preferredBlockSize < minimumBlockSize {
+				preferredBlockSize = minimumBlockSize
+			}
+			// ensure maximumBlockSize is a multiple of preferredBlockSize
+			maximumBlockSize = maximumBlockSize & ^(preferredBlockSize - 1)
+			if maximumBlockSize < preferredBlockSize {
+				maximumBlockSize = preferredBlockSize
+			}
 			size = size & ^(minimumBlockSize - 1)
 			return &Export{
 				size:               size,

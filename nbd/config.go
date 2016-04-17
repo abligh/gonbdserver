@@ -75,13 +75,16 @@ type ServerConfig struct {
 
 // ExportConfig holds the config for one exported item
 type ExportConfig struct {
-	Name             string                 // name of the export
-	Description      string                 // description of export
-	Driver           string                 // name of the driver
-	ReadOnly         bool                   // true of the export should be opened readonly
-	Workers          int                    // number of concurrent workers
-	TlsOnly          bool                   // true if the export should only be served over TLS
-	DriverParameters DriverParametersConfig `yaml:",inline"` // driver parameters. These are an arbitrary map. Inline means they go aside teh foregoing
+	Name               string                 // name of the export
+	Description        string                 // description of export
+	Driver             string                 // name of the driver
+	ReadOnly           bool                   // true of the export should be opened readonly
+	Workers            int                    // number of concurrent workers
+	TlsOnly            bool                   // true if the export should only be served over TLS
+	MinimumBlockSize   uint64                 // minimum block size
+	PreferredBlockSize uint64                 // preferred block size
+	MaximumBlockSize   uint64                 // maximum block size
+	DriverParameters   DriverParametersConfig `yaml:",inline"` // driver parameters. These are an arbitrary map. Inline means they go aside teh foregoing
 }
 
 // TlsConfig has the configuration for TLS

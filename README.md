@@ -143,6 +143,9 @@ Each `export` item consists of the following (common to all drivers):
 * `readonly:` set to `true` for readonly, `false` otherwise. Optional, defaults to `false`.
 * `workers:` the number of simultaneous worker threads. Optional, defaults to 5.
 * `tlsonly:` set to `true` if the export is only to be provided over TLS, `false` otherwise. Optional, defaults to `false`
+* `minimumblocksize:` set to the minimum block size (must be a power of two). Optional, defaults to driver's minimum block size
+* `preferredblocksize:` set to the preferred block size (must be a power of two). Optional, defaults to driver's preferred block size
+* `maximumblocksize:` set to the maximum block size (must be a multiple of preferredblocksize). Optional, defaults to driver's maximum block size
 
 The `file` driver reads the disk from a file on the host OS's disks. It has the following options:
 
