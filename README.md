@@ -29,6 +29,13 @@ Features
 
 * **Logging**. To syslog, a file, or stderr
  
+NBD Experimental Extensions Implemented
+---------------------------------------
+
+* `WRITE_ZEROES` - support for `NBD_CMD_WRITE_ZEROES`
+
+* `INFO` - support for `NBD_OPT_INFO`, `NBD_OPT_GO` and `NBD_OPT_BLOCK_SIZE`.
+
 Invocation
 ----------
 
