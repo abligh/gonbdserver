@@ -46,7 +46,7 @@ func (fb *FileBackend) Close(ctx context.Context) error {
 
 // Size implements Backend.Size
 func (fb *FileBackend) Geometry(ctx context.Context) (uint64, uint64, uint64, uint64, error) {
-	return fb.size, 1, 4096, 65536, nil
+	return fb.size, 1, 4096, 32 * 1024 * 1024, nil
 }
 
 // Generate a new file backend

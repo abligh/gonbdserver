@@ -60,7 +60,7 @@ func (rb *RbdBackend) Close(ctx context.Context) error {
 
 // Size implements Backend.Size
 func (rb *RbdBackend) Geometry(ctx context.Context) (uint64, uint64, uint64, uint64, error) {
-	return rb.size, 4096, 4096, 65536, nil
+	return rb.size, 4096, 4096, 32 * 1024 * 1024, nil
 }
 
 // Generate a new file backend
