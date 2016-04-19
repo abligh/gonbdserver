@@ -206,7 +206,7 @@ func (c *Connection) Receive(ctx context.Context) {
 				c.logger.Printf("[ERROR] Client %s gave bad offset or length", c.name)
 				return
 			}
-			if uint64(req.length) & ^(c.export.minimumBlockSize-1) != 0 || uint64(req.offset) & ^(c.export.minimumBlockSize-1) != 0 || uint64(req.length) > c.export.maximumBlockSize {
+			if uint64(req.length)&(c.export.minimumBlockSize-1) != 0 || uint64(req.offset)&(c.export.minimumBlockSize-1) != 0 || uint64(req.length) > c.export.maximumBlockSize {
 				c.logger.Printf("[ERROR] Client %s gave offset or length outside blocksize paramaters", c.name)
 				return
 			}
