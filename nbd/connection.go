@@ -207,7 +207,7 @@ func (c *Connection) Receive(ctx context.Context) {
 				return
 			}
 			if uint64(req.length)&(c.export.minimumBlockSize-1) != 0 || uint64(req.offset)&(c.export.minimumBlockSize-1) != 0 || uint64(req.length) > c.export.maximumBlockSize {
-				c.logger.Printf("[ERROR] Client %s gave offset or length outside blocksize paramaters", c.name)
+				c.logger.Printf("[ERROR] Client %s gave offset or length outside blocksize paramaters cmd=%d (len=%08x,off=%08x,minbs=%08x,maxbs=%08x)", c.name, req.nbdReq.NbdCommandType, req.length, req.offset, c.export.minimumBlockSize, c.export.maximumBlockSize)
 				return
 			}
 		}
@@ -412,6 +412,9 @@ func (c *Connection) Serve(parentCtx context.Context) {
 
 	c.conn = c.plainConn
 	c.name = c.plainConn.RemoteAddr().String()
+	if c.name == "" {
+		c.name = "[unknown]"
+	}
 
 	defer func() {
 		if c.backend != nil {

@@ -58,6 +58,10 @@ const (
 	ENV_PIDFILE  = "_GONBDSERVER_PIDFILE"
 )
 
+type Control struct {
+	quit chan struct{}
+}
+
 // Config holds the config that applies to all servers (currently just logging), and an array of server configs
 type Config struct {
 	Servers []ServerConfig // array of server configs
@@ -307,7 +311,7 @@ func (c *Config) GetLogger() (*log.Logger, io.Closer, error) {
 // RunConfig - this is effectively the main entry point of the program
 //
 // We parse the config, then start each of the listeners, restarting them when we get SIGHUP, but being sure not to kill the sessions
-func RunConfig() {
+func RunConfig(control *Control) {
 	// just until we read the configuration
 	logger := log.New(os.Stderr, "gonbdserver:", log.LstdFlags)
 	var logCloser io.Closer
@@ -326,9 +330,11 @@ func RunConfig() {
 	intr := make(chan os.Signal, 1)
 	term := make(chan os.Signal, 1)
 	hup := make(chan os.Signal, 1)
-	signal.Notify(intr, os.Interrupt)
-	signal.Notify(term, syscall.SIGTERM)
-	signal.Notify(hup, syscall.SIGHUP)
+	if control == nil {
+		signal.Notify(intr, os.Interrupt)
+		signal.Notify(term, syscall.SIGTERM)
+		signal.Notify(hup, syscall.SIGHUP)
+	}
 
 	for {
 		var wg sync.WaitGroup
@@ -366,6 +372,9 @@ func RunConfig() {
 			case <-term:
 				logger.Println("[INFO] Terminate signal received")
 				return
+			case <-control.quit:
+				logger.Println("[INFO] Programmatic quit received")
+				return
 			case <-hup:
 				logger.Println("[INFO] Reload signal received; reloading configuration which will be effective for new connections")
 				configCancelFunc() // kill the listeners but not the sessions
@@ -375,13 +384,15 @@ func RunConfig() {
 	}
 }
 
-func Run() {
+func Run(control *Control) {
+	if control == nil {
+		control = &Control{}
+	}
 	// Just for this routine
 	logger := log.New(os.Stderr, "gonbdserver:", log.LstdFlags)
 
 	daemon.AddFlag(daemon.StringFlag(sendSignal, "stop"), syscall.SIGTERM)
 	daemon.AddFlag(daemon.StringFlag(sendSignal, "reload"), syscall.SIGHUP)
-	flag.Parse()
 
 	if daemon.WasReborn() {
 		if val := os.Getenv(ENV_CONFFILE); val != "" {
@@ -410,7 +421,7 @@ func Run() {
 	}
 
 	if *foreground {
-		RunConfig()
+		RunConfig(control)
 		return
 	}
 
@@ -463,5 +474,5 @@ func Run() {
 		os.Remove(*pidFile)
 	}()
 
-	RunConfig()
+	RunConfig(control)
 }

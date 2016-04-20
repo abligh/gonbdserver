@@ -100,12 +100,16 @@ const (
 	NBD_REPLY_TYPE_OFFSET_HOLE  = 4
 )
 
-// NBD server flags
+// NBD hanshake flags
 const (
-	NBD_FLAG_FIXED_NEWSTYLE   = 1 << 0
-	NBD_FLAG_NO_ZEROES        = 1 << 1
-	NBD_FLAG_C_FIXED_NEWSTYLE = NBD_FLAG_FIXED_NEWSTYLE
-	NBD_FLAG_C_NO_ZEROES      = NBD_FLAG_NO_ZEROES
+	NBD_FLAG_FIXED_NEWSTYLE = 1 << 0
+	NBD_FLAG_NO_ZEROES      = 1 << 1
+)
+
+// NBD client flags
+const (
+	NBD_FLAG_C_FIXED_NEWSTYLE = 1 << 0
+	NBD_FLAG_C_NO_ZEROES      = 1 << 1
 )
 
 // NBD errors
