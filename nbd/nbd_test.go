@@ -42,6 +42,8 @@ servers:
 logging:
 `
 
+var longtests = flag.Bool("longtests", false, "enable long tests")
+
 type TestConfig struct {
 	Tls     bool
 	TempDir string
@@ -501,9 +503,17 @@ func TestConnectionIntegrityTls(t *testing.T) {
 }
 
 func TestConnectionIntegrityHuge(t *testing.T) {
-	doTestConnectionIntegrity(t, []byte(testHugeTransactionLog), false)
+	if !*longtests {
+		t.Skip("Skipping this test as long tests not enabled (used -longtests)")
+	} else {
+		doTestConnectionIntegrity(t, []byte(testHugeTransactionLog), false)
+	}
 }
 
 func TestConnectionIntegrityHugeTls(t *testing.T) {
-	doTestConnectionIntegrity(t, []byte(testHugeTransactionLog), true)
+	if !*longtests {
+		t.Skip("Skipping this test as long tests not enabled (used -longtests)")
+	} else {
+		doTestConnectionIntegrity(t, []byte(testHugeTransactionLog), true)
+	}
 }
