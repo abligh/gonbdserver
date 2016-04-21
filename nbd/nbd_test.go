@@ -24,7 +24,7 @@ servers:
   address: {{.TempDir}}/nbd.sock
   exports:
   - name: foo
-    driver: file
+    driver: {{.Driver}}
     path: {{.TempDir}}/nbd.img
     workers: 20
   - name: bar
@@ -47,6 +47,7 @@ var longtests = flag.Bool("longtests", false, "enable long tests")
 type TestConfig struct {
 	Tls     bool
 	TempDir string
+	Driver  string
 }
 
 type NbdInstance struct {
@@ -462,8 +463,12 @@ func TestConnectionTls(t *testing.T) {
 	doTestConnection(t, true)
 }
 
-func doTestConnectionIntegrity(t *testing.T, transationLog []byte, tls bool) {
-	ni := StartNbd(t, TestConfig{Tls: tls})
+func doTestConnectionIntegrity(t *testing.T, transationLog []byte, tls bool, driver string) {
+	if _, ok := BackendMap[driver]; !ok {
+		t.Skip(fmt.Sprintf("Skipping test as driver %s not built", driver))
+		return
+	}
+	ni := StartNbd(t, TestConfig{Tls: tls, Driver: driver})
 	defer ni.Close()
 
 	if err := ni.CreateFile(t, 50*1024*1024); err != nil {
@@ -495,18 +500,18 @@ func doTestConnectionIntegrity(t *testing.T, transationLog []byte, tls bool) {
 }
 
 func TestConnectionIntegrity(t *testing.T) {
-	doTestConnectionIntegrity(t, []byte(testTransactionLog), false)
+	doTestConnectionIntegrity(t, []byte(testTransactionLog), false, "file")
 }
 
 func TestConnectionIntegrityTls(t *testing.T) {
-	doTestConnectionIntegrity(t, []byte(testTransactionLog), true)
+	doTestConnectionIntegrity(t, []byte(testTransactionLog), true, "file")
 }
 
 func TestConnectionIntegrityHuge(t *testing.T) {
 	if !*longtests {
 		t.Skip("Skipping this test as long tests not enabled (used -longtests)")
 	} else {
-		doTestConnectionIntegrity(t, []byte(testHugeTransactionLog), false)
+		doTestConnectionIntegrity(t, []byte(testHugeTransactionLog), false, "file")
 	}
 }
 
@@ -514,6 +519,30 @@ func TestConnectionIntegrityHugeTls(t *testing.T) {
 	if !*longtests {
 		t.Skip("Skipping this test as long tests not enabled (used -longtests)")
 	} else {
-		doTestConnectionIntegrity(t, []byte(testHugeTransactionLog), true)
+		doTestConnectionIntegrity(t, []byte(testHugeTransactionLog), true, "file")
+	}
+}
+
+func TestAioConnectionIntegrity(t *testing.T) {
+	doTestConnectionIntegrity(t, []byte(testTransactionLog), false, "aiofile")
+}
+
+func TestAioConnectionIntegrityTls(t *testing.T) {
+	doTestConnectionIntegrity(t, []byte(testTransactionLog), true, "aiofile")
+}
+
+func TestAioConnectionIntegrityHuge(t *testing.T) {
+	if !*longtests {
+		t.Skip("Skipping this test as long tests not enabled (used -longtests)")
+	} else {
+		doTestConnectionIntegrity(t, []byte(testHugeTransactionLog), false, "aiofile")
+	}
+}
+
+func TestAioConnectionIntegrityHugeTls(t *testing.T) {
+	if !*longtests {
+		t.Skip("Skipping this test as long tests not enabled (used -longtests)")
+	} else {
+		doTestConnectionIntegrity(t, []byte(testHugeTransactionLog), true, "aiofile")
 	}
 }

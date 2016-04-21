@@ -4,3 +4,5 @@ gonbdserver
 *~
 \#*\#
 certs
+nbd/nbd
+nbd/nbd.test

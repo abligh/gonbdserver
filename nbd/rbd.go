@@ -65,12 +65,12 @@ func (rb *RbdBackend) Geometry(ctx context.Context) (uint64, uint64, uint64, uin
 }
 
 // Size implements Backend.HasFua
-func (rb *FileBackend) HasFua(ctx context.Context) bool {
+func (rb *RbdBackend) HasFua(ctx context.Context) bool {
 	return true
 }
 
 // Size implements Backend.HasFua
-func (rb *FileBackend) HasFlush(ctx context.Context) bool {
+func (rb *RbdBackend) HasFlush(ctx context.Context) bool {
 	return true
 }
 
