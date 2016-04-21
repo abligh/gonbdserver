@@ -64,6 +64,16 @@ func (rb *RbdBackend) Geometry(ctx context.Context) (uint64, uint64, uint64, uin
 	return rb.size, 4096, 4096, 32 * 1024 * 1024, nil
 }
 
+// Size implements Backend.HasFua
+func (rb *FileBackend) HasFua(ctx context.Context) bool {
+	return true
+}
+
+// Size implements Backend.HasFua
+func (rb *FileBackend) HasFlush(ctx context.Context) bool {
+	return true
+}
+
 // Generate a new file backend
 func NewRbdBackend(ctx context.Context, ec *ExportConfig) (Backend, error) {
 	cluster := ec.DriverParameters["cluster"]

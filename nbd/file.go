@@ -49,6 +49,16 @@ func (fb *FileBackend) Geometry(ctx context.Context) (uint64, uint64, uint64, ui
 	return fb.size, 1, 4096, 128 * 1024 * 1024, nil
 }
 
+// Size implements Backend.HasFua
+func (fb *FileBackend) HasFua(ctx context.Context) bool {
+	return true
+}
+
+// Size implements Backend.HasFua
+func (fb *FileBackend) HasFlush(ctx context.Context) bool {
+	return true
+}
+
 // Generate a new file backend
 func NewFileBackend(ctx context.Context, ec *ExportConfig) (Backend, error) {
 	perms := os.O_RDWR

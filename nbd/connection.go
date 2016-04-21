@@ -72,6 +72,8 @@ type Backend interface {
 	Flush(ctx context.Context) error                                            // flush
 	Close(ctx context.Context) error                                            // close
 	Geometry(ctx context.Context) (uint64, uint64, uint64, uint64, error)       // size, minimum BS, preferred BS, maximum BS
+	HasFua(ctx context.Context) bool                                            // does the driver support FUA?
+	HasFlush(ctx context.Context) bool                                          // does the driver support flush?
 }
 
 // BackendMap is a map between backends and the generator function for them
@@ -849,10 +851,17 @@ func (c *Connection) connectExport(ctx context.Context, ec *ExportConfig) (*Expo
 			if maximumBlockSize < preferredBlockSize {
 				maximumBlockSize = preferredBlockSize
 			}
+			flags := uint16(NBD_FLAG_HAS_FLAGS | NBD_FLAG_SEND_FLUSH | NBD_FLAG_SEND_WRITE_ZEROES | NBD_FLAG_SEND_CLOSE)
+			if backend.HasFua(ctx) {
+				flags |= NBD_FLAG_SEND_FUA
+			}
+			if backend.HasFlush(ctx) {
+				flags |= NBD_FLAG_SEND_FLUSH
+			}
 			size = size & ^(minimumBlockSize - 1)
 			return &Export{
 				size:               size,
-				exportFlags:        NBD_FLAG_HAS_FLAGS | NBD_FLAG_SEND_FLUSH | NBD_FLAG_SEND_FUA | NBD_FLAG_SEND_WRITE_ZEROES | NBD_FLAG_SEND_CLOSE,
+				exportFlags:        flags,
 				name:               ec.Name,
 				readonly:           ec.ReadOnly,
 				workers:            ec.Workers,
