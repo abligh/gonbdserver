@@ -509,7 +509,7 @@ func TestConnectionIntegrityTls(t *testing.T) {
 
 func TestConnectionIntegrityHuge(t *testing.T) {
 	if !*longtests {
-		t.Skip("Skipping this test as long tests not enabled (used -longtests)")
+		t.Skip("Skipping this test as long tests not enabled (use -longtests to enable)")
 	} else {
 		doTestConnectionIntegrity(t, []byte(testHugeTransactionLog), false, "file")
 	}
@@ -517,7 +517,7 @@ func TestConnectionIntegrityHuge(t *testing.T) {
 
 func TestConnectionIntegrityHugeTls(t *testing.T) {
 	if !*longtests {
-		t.Skip("Skipping this test as long tests not enabled (used -longtests)")
+		t.Skip("Skipping this test as long tests not enabled (use -longtests to enable)")
 	} else {
 		doTestConnectionIntegrity(t, []byte(testHugeTransactionLog), true, "file")
 	}
@@ -533,7 +533,7 @@ func TestAioConnectionIntegrityTls(t *testing.T) {
 
 func TestAioConnectionIntegrityHuge(t *testing.T) {
 	if !*longtests {
-		t.Skip("Skipping this test as long tests not enabled (used -longtests)")
+		t.Skip("Skipping this test as long tests not enabled (use -longtests to enable)")
 	} else {
 		doTestConnectionIntegrity(t, []byte(testHugeTransactionLog), false, "aiofile")
 	}
@@ -541,7 +541,7 @@ func TestAioConnectionIntegrityHuge(t *testing.T) {
 
 func TestAioConnectionIntegrityHugeTls(t *testing.T) {
 	if !*longtests {
-		t.Skip("Skipping this test as long tests not enabled (used -longtests)")
+		t.Skip("Skipping this test as long tests not enabled (use -longtests to enable)")
 	} else {
 		doTestConnectionIntegrity(t, []byte(testHugeTransactionLog), true, "aiofile")
 	}
