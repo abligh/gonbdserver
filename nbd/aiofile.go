@@ -91,8 +91,7 @@ func NewAioFileBackend(ctx context.Context, ec *ExportConfig) (Backend, error) {
 	if err != nil {
 		return nil, err
 	}
-	// sadly aio doesn't implement stat. Use os.Stat even though it's racy
-	stat, err := os.Stat(ec.DriverParameters["path"])
+	stat, err := aio.FD().Stat()
 	if err != nil {
 		aio.Close()
 		return nil, err
