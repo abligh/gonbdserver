@@ -152,6 +152,11 @@ The `file` driver reads the disk from a file on the host OS's disks. It has the 
 * `path:` path to the file. Mandatory.
 * `sync:` set to `true` to open the file with `O_SYNC`, else to `false`. Optional, defaults to `false`.
 
+The `aiofile` driver reads the disk from a file on the host OS's disks using AIO (available on Linux only). This driver is experimental; do not use it in production. It has the following options:
+
+* `path:` path to the file. Mandatory.
+* `sync:` set to `true` to open the file with `O_SYNC`, else to `false`. Optional, defaults to `false`.
+
 The `rbd` driver reads the disk from Ceph. It relies on your `ceph.conf` file being set up correctly, and has the following options:
 
 * `image:` RBD name of image. Mandatory.
