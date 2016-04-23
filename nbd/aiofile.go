@@ -8,7 +8,6 @@
 package nbd
 
 import (
-	"errors"
 	"github.com/traetox/goaio"
 	"golang.org/x/net/context"
 	"os"
@@ -29,7 +28,12 @@ func (afb *AioFileBackend) WriteAt(ctx context.Context, b []byte, offset int64, 
 	if err != nil {
 		return 0, err
 	}
-	afb.aio.WaitFor(requestId)
+	if err := afb.aio.WaitFor(requestId); err != nil {
+		return 0, err
+	}
+	if err := afb.aio.Ack(requestId); err != nil {
+		return 0, err
+	}
 	return len(b), err
 }
 
@@ -42,7 +46,12 @@ func (afb *AioFileBackend) ReadAt(ctx context.Context, b []byte, offset int64) (
 	if err != nil {
 		return 0, err
 	}
-	afb.aio.WaitFor(requestId)
+	if err := afb.aio.WaitFor(requestId); err != nil {
+		return 0, err
+	}
+	if err := afb.aio.Ack(requestId); err != nil {
+		return 0, err
+	}
 	return len(b), err
 }
 
@@ -53,7 +62,7 @@ func (afb *AioFileBackend) TrimAt(ctx context.Context, length int, offset int64)
 
 // Flush implements Backend.Flush
 func (afb *AioFileBackend) Flush(ctx context.Context) error {
-	return errors.New("Flush not supported")
+	return afb.aio.Flush()
 }
 
 // Close implements Backend.Close
