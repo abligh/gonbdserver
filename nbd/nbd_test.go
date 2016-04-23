@@ -38,7 +38,7 @@ servers:
     cacertfile: {{.TempDir}}/ca-cert.pem
     servername: localhost
     clientauth: requireverify
-{{- end}}
+{{end}}
 logging:
 `
 
