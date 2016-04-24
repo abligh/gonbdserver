@@ -85,6 +85,7 @@ type Export struct {
 	minimumBlockSize   uint64 // minimum block size
 	preferredBlockSize uint64 // preferred block size
 	maximumBlockSize   uint64 // maximum block size
+	memoryBlockSize    uint64 // block size for memory chunks
 	exportFlags        uint16 // export flags in NBD format
 	name               string // name of the export
 	description        string // description of the export
@@ -97,10 +98,10 @@ type Export struct {
 type Request struct {
 	nbdReq  nbdRequest // the request in nbd format
 	nbdRep  nbdReply   // the reply in nbd format
-	length  int        // the checked length
-	offset  int64      // the checked offset
-	reqData []byte     // request data (e.g. for a write)
-	repData []byte     // reply data (e.g. for a read)
+	length  uint64     // the checked length
+	offset  uint64     // the checked offset
+	reqData [][]byte   // request data (e.g. for a write)
+	repData [][]byte   // reply data (e.g. for a read)
 	flags   uint64     // our internal flag structure characterizing the request
 }
 
@@ -145,6 +146,29 @@ func (c *Connection) Kill(ctx context.Context) {
 	}
 }
 
+// Get memory for a particular length
+func (c *Connection) GetMemory(ctx context.Context, length uint64) [][]byte {
+	n := (length + c.export.memoryBlockSize - 1) / c.export.memoryBlockSize
+	mem := make([][]byte, n, n)
+	for i := uint64(0); i < n; i++ {
+		mem[i] = make([]byte, c.export.memoryBlockSize)
+	}
+	return mem
+}
+
+// Get memory for a particular length
+func (c *Connection) FreeMemory(ctx context.Context, mem [][]byte) {
+}
+
+// Zero memory
+func (c *Connection) ZeroMemory(ctx context.Context, mem [][]byte) {
+	for i, _ := range mem {
+		for j, _ := range mem[i] {
+			mem[i][j] = 0
+		}
+	}
+}
+
 // Receive is the goroutine that handles decoding conncetion data from the socket
 func (c *Connection) Receive(ctx context.Context) {
 	defer func() {
@@ -153,10 +177,7 @@ func (c *Connection) Receive(ctx context.Context) {
 		c.wg.Done()
 	}()
 	for {
-		req := Request{
-			repData: make([]byte, 0),
-			reqData: make([]byte, 0),
-		}
+		req := Request{}
 		if err := binary.Read(c.conn, binary.BigEndian, &req.nbdReq); err != nil {
 			if nerr, ok := err.(net.Error); ok {
 				if nerr.Timeout() {
@@ -202,46 +223,56 @@ func (c *Connection) Receive(ctx context.Context) {
 		}
 
 		if req.flags&CMDT_CHECK_LENGTH_OFFSET != 0 {
-			req.length = int(req.nbdReq.NbdLength)
-			req.offset = int64(req.nbdReq.NbdOffset)
-			if req.length <= 0 || req.offset < 0 || int64(req.length)+req.offset > int64(c.export.size) {
+			req.length = uint64(req.nbdReq.NbdLength)
+			req.offset = req.nbdReq.NbdOffset
+			if req.length <= 0 || req.length+req.offset > c.export.size {
 				c.logger.Printf("[ERROR] Client %s gave bad offset or length", c.name)
 				return
 			}
-			if uint64(req.length)&(c.export.minimumBlockSize-1) != 0 || uint64(req.offset)&(c.export.minimumBlockSize-1) != 0 || uint64(req.length) > c.export.maximumBlockSize {
+			if req.length&(c.export.minimumBlockSize-1) != 0 || req.offset&(c.export.minimumBlockSize-1) != 0 || req.length > c.export.maximumBlockSize {
 				c.logger.Printf("[ERROR] Client %s gave offset or length outside blocksize paramaters cmd=%d (len=%08x,off=%08x,minbs=%08x,maxbs=%08x)", c.name, req.nbdReq.NbdCommandType, req.length, req.offset, c.export.minimumBlockSize, c.export.maximumBlockSize)
 				return
 			}
 		}
 
 		if req.flags&CMDT_REQ_PAYLOAD != 0 {
-			req.reqData = make([]byte, req.length, req.length)
+			req.reqData = c.GetMemory(ctx, req.length)
 			if req.length <= 0 {
 				c.logger.Printf("[ERROR] Client %s gave bad length", c.name)
 				return
 			}
-			n, err := io.ReadFull(c.conn, req.reqData)
-			if err != nil {
-				if isClosedErr(err) {
-					// Don't report this - we closed it
+			length := req.length
+			for i := 0; length > 0; i++ {
+				blocklen := c.export.memoryBlockSize
+				if blocklen > length {
+					blocklen = length
+				}
+				n, err := io.ReadFull(c.conn, req.reqData[i][:blocklen])
+				if err != nil {
+					if isClosedErr(err) {
+						// Don't report this - we closed it
+						return
+					}
+
+					c.logger.Printf("[ERROR] Client %s cannot read data to write: %s", c.name, err)
 					return
 				}
 
-				c.logger.Printf("[ERROR] Client %s cannot read data to write: %s", c.name, err)
-				return
+				if uint64(n) != blocklen {
+					c.logger.Printf("[ERROR] Client %s cannot read all data to write: %d != %d", c.name, n, blocklen)
+					return
+
+				}
+				length -= blocklen
 			}
 
-			if n != len(req.reqData) {
-				c.logger.Printf("[ERROR] Client %s cannot read all data to write: %d != %d", c.name, n, len(req.reqData))
-				return
-
-			}
 		} else if req.flags&CMDT_REQ_FAKE_PAYLOAD != 0 {
-			req.reqData = make([]byte, req.length, req.length)
+			req.reqData = c.GetMemory(ctx, req.length)
+			c.ZeroMemory(ctx, req.reqData)
 		}
 
 		if req.flags&CMDT_REP_PAYLOAD != 0 {
-			req.repData = make([]byte, req.length, req.length)
+			req.repData = c.GetMemory(ctx, req.length)
 		}
 
 		atomic.AddInt64(&c.numInflight, 1) // one more in flight
@@ -300,35 +331,71 @@ func (c *Connection) Dispatch(ctx context.Context, n int) {
 			//c.logger.Printf("[DEBUG] Client %s dispatcher %d command %d latency %s", c.name, n, req.nbdReq.NbdCommandType, checkpoint(&t))
 			fua := req.nbdReq.NbdCommandFlags&NBD_CMD_FLAG_FUA != 0
 
+			addr := req.offset
+			length := req.length
 			switch req.nbdReq.NbdCommandType {
 			case NBD_CMD_READ:
-				n, err := c.backend.ReadAt(ctx, req.repData, req.offset)
-				if err != nil {
-					c.logger.Printf("[WARN] Client %s got read I/O error: %s", c.name, err)
-					req.nbdRep.NbdError = NbdError(err)
-				} else if n != req.length {
-					c.logger.Printf("[WARN] Client %s got incomplete read (%d != %d) at offset %d", c.name, n, req.length, req.offset)
-					req.nbdRep.NbdError = NBD_EIO
+				for i := 0; length > 0; i++ {
+					blocklen := c.export.memoryBlockSize
+					if blocklen > length {
+						blocklen = length
+					}
+					n, err := c.backend.ReadAt(ctx, req.repData[i][:blocklen], int64(addr))
+					if err != nil {
+						c.ZeroMemory(ctx, req.repData[i:])
+						c.logger.Printf("[WARN] Client %s got read I/O error: %s", c.name, err)
+						req.nbdRep.NbdError = NbdError(err)
+						break
+					} else if uint64(n) != blocklen {
+						c.ZeroMemory(ctx, req.repData[i:])
+						c.logger.Printf("[WARN] Client %s got incomplete read (%d != %d) at offset %d", c.name, n, length, addr)
+						req.nbdRep.NbdError = NBD_EIO
+						break
+					}
+					addr += blocklen
+					length -= blocklen
 				}
 			case NBD_CMD_WRITE, NBD_CMD_WRITE_ZEROES:
-				n, err := c.backend.WriteAt(ctx, req.reqData, req.offset, fua)
-				if err != nil {
-					c.logger.Printf("[WARN] Client %s got write I/O error: %s", c.name, err)
-					req.nbdRep.NbdError = NbdError(err)
-				} else if n != req.length {
-					c.logger.Printf("[WARN] Client %s got incomplete write (%d != %d) at offset %d", c.name, n, req.length, req.offset)
-					req.nbdRep.NbdError = NBD_EIO
+				for i := 0; length > 0; i++ {
+					blocklen := c.export.memoryBlockSize
+					if blocklen > length {
+						blocklen = length
+					}
+					n, err := c.backend.WriteAt(ctx, req.reqData[i][:blocklen], int64(addr), fua)
+					if err != nil {
+						c.logger.Printf("[WARN] Client %s got write I/O error: %s", c.name, err)
+						req.nbdRep.NbdError = NbdError(err)
+						break
+					} else if uint64(n) != blocklen {
+						c.logger.Printf("[WARN] Client %s got incomplete write (%d != %d) at offset %d", c.name, n, length, addr)
+						req.nbdRep.NbdError = NBD_EIO
+						break
+					}
+					addr += blocklen
+					length -= blocklen
 				}
 			case NBD_CMD_FLUSH:
 				c.backend.Flush(ctx)
 			case NBD_CMD_TRIM:
-				n, err := c.backend.TrimAt(ctx, req.length, req.offset)
-				if err != nil {
-					c.logger.Printf("[WARN] Client %s got write I/O error: %s", c.name, err)
-					req.nbdRep.NbdError = NbdError(err)
-				} else if n != req.length {
-					c.logger.Printf("[WARN] Client %s got incomplete write (%d != %d) at offset %d", c.name, n, req.length, req.offset)
-					req.nbdRep.NbdError = NBD_EIO
+				for i := 0; length > 0; i++ {
+					blocklen := c.export.memoryBlockSize
+					if blocklen > length {
+						blocklen = length
+					}
+					n, err := c.backend.TrimAt(ctx, int(req.length), int64(addr))
+					if err != nil {
+						c.ZeroMemory(ctx, req.repData[i:])
+						c.logger.Printf("[WARN] Client %s got trim I/O error: %s", c.name, err)
+						req.nbdRep.NbdError = NbdError(err)
+						break
+					} else if uint64(n) != blocklen {
+						c.ZeroMemory(ctx, req.repData[i:])
+						c.logger.Printf("[WARN] Client %s got incomplete trim (%d != %d) at offset %d", c.name, n, length, addr)
+						req.nbdRep.NbdError = NBD_EIO
+						break
+					}
+					addr += blocklen
+					length -= blocklen
 				}
 			case NBD_CMD_DISC:
 				c.waitForInflight(ctx, 1) // this request is itself in flight, so 1 is permissible
@@ -392,11 +459,25 @@ func (c *Connection) Transmit(ctx context.Context) {
 				c.logger.Printf("[ERROR] Client %s cannot write reply", c.name)
 				return
 			}
-			if req.flags&CMDT_REP_PAYLOAD != 0 && len(req.repData) > 0 {
-				if n, err := c.conn.Write(req.repData); err != nil || n != len(req.repData) {
-					c.logger.Printf("[ERROR] Client %s cannot write reply", c.name)
-					return
+			if req.flags&CMDT_REP_PAYLOAD != 0 && req.repData != nil {
+				length := req.length
+				for i := 0; length > 0; i++ {
+					blocklen := c.export.memoryBlockSize
+					if blocklen > length {
+						blocklen = length
+					}
+					if n, err := c.conn.Write(req.repData[i][:blocklen]); err != nil || uint64(n) != blocklen {
+						c.logger.Printf("[ERROR] Client %s cannot write reply", c.name)
+						return
+					}
+					length -= blocklen
 				}
+			}
+			if req.repData != nil {
+				c.FreeMemory(ctx, req.repData)
+			}
+			if req.reqData != nil {
+				c.FreeMemory(ctx, req.reqData)
 			}
 			// TODO: with structured replies, only do this if the 'DONE' bit is set.
 			atomic.AddInt64(&c.numInflight, -1) // one less in flight
@@ -870,6 +951,7 @@ func (c *Connection) connectExport(ctx context.Context, ec *ExportConfig) (*Expo
 				minimumBlockSize:   minimumBlockSize,
 				preferredBlockSize: preferredBlockSize,
 				maximumBlockSize:   maximumBlockSize,
+				memoryBlockSize:    preferredBlockSize,
 			}, nil
 		}
 	}
