@@ -10,10 +10,14 @@ import (
 	"io/ioutil"
 	"log"
 	"log/syslog"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +56,7 @@ var configFile = flag.String("c", "/etc/gonbdserver.conf", "Path to YAML config 
 var pidFile = flag.String("p", "/var/run/gonbdserver.pid", "Path to PID file")
 var sendSignal = flag.String("s", "", "Send signal to daemon (either \"stop\" or \"reload\")")
 var foreground = flag.Bool("f", false, "Run in foreground (not as daemon)")
+var pprof = flag.Bool("pprof", false, "Run pprof")
 
 const (
 	ENV_CONFFILE = "_GONBDSERVER_CONFFILE"
@@ -330,11 +335,33 @@ func RunConfig(control *Control) {
 	intr := make(chan os.Signal, 1)
 	term := make(chan os.Signal, 1)
 	hup := make(chan os.Signal, 1)
+	usr1 := make(chan os.Signal, 1)
+	defer close(intr)
+	defer close(term)
+	defer close(hup)
+	defer close(usr1)
 	if control == nil {
 		signal.Notify(intr, os.Interrupt)
 		signal.Notify(term, syscall.SIGTERM)
 		signal.Notify(hup, syscall.SIGHUP)
 	}
+
+	signal.Notify(usr1, syscall.SIGUSR1)
+	go func() {
+		for {
+			select {
+			case _, ok := <-usr1:
+				if !ok {
+					return
+				}
+				logger.Println("[INFO] Run GC()")
+				runtime.GC()
+				logger.Println("[INFO] GC() done")
+				debug.FreeOSMemory()
+				logger.Println("[INFO] FreeOsMemory() done")
+			}
+		}
+	}()
 
 	for {
 		var wg sync.WaitGroup
@@ -388,6 +415,12 @@ func Run(control *Control) {
 	if control == nil {
 		control = &Control{}
 	}
+
+	if *pprof {
+		runtime.MemProfileRate = 1
+		go http.ListenAndServe(":8080", nil)
+	}
+
 	// Just for this routine
 	logger := log.New(os.Stderr, "gonbdserver:", log.LstdFlags)
 

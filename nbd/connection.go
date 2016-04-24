@@ -59,6 +59,12 @@ type Connection struct {
 	disconnectReceived int64                 // nonzero if disconnect has been received
 	numInflight        int64                 // number of inflight requests
 
+	memBlockCh         chan []byte // channel of memory blocks that are free
+	memBlocksMaximum   int64       // maximum blocks that may be allocated
+	memBlocksAllocated int64       // blocks allocated now
+	memBlocksFreeLWM   int         // smallest number of blocks free over period
+	memBlocksMutex     sync.Mutex  // protects memBlocksAllocated and memBlocksFreeLWM
+
 	killCh    chan struct{} // closed by workers to indicate a hard close is required
 	killed    bool          // true if killCh closed already
 	killMutex sync.Mutex    // protects killed
@@ -150,14 +156,69 @@ func (c *Connection) Kill(ctx context.Context) {
 func (c *Connection) GetMemory(ctx context.Context, length uint64) [][]byte {
 	n := (length + c.export.memoryBlockSize - 1) / c.export.memoryBlockSize
 	mem := make([][]byte, n, n)
+	c.memBlocksMutex.Lock()
 	for i := uint64(0); i < n; i++ {
-		mem[i] = make([]byte, c.export.memoryBlockSize)
+		var m []byte
+		var ok bool
+		select {
+		case <-ctx.Done():
+			c.memBlocksMutex.Unlock()
+			return nil
+		case m, ok = <-c.memBlockCh:
+			if !ok {
+				c.logger.Printf("[ERROR] Memory channel failed")
+				c.memBlocksMutex.Unlock()
+				return nil
+			}
+		default:
+			c.memBlocksFreeLWM = 0 // ensure no more are freed
+			if c.memBlocksAllocated < c.memBlocksMaximum {
+				c.memBlocksAllocated++
+				m = make([]byte, c.export.memoryBlockSize)
+			} else {
+				c.memBlocksMutex.Unlock()
+				select {
+				case m, ok = <-c.memBlockCh:
+					if !ok {
+						c.logger.Printf("[ERROR] Memory channel failed")
+						return nil
+					}
+				case <-ctx.Done():
+					return nil
+				}
+				c.memBlocksMutex.Lock()
+			}
+		}
+		mem[i] = m
 	}
+	if freeBlocks := len(c.memBlockCh); freeBlocks < c.memBlocksFreeLWM {
+		c.memBlocksFreeLWM = freeBlocks
+	}
+	c.memBlocksMutex.Unlock()
 	return mem
 }
 
 // Get memory for a particular length
 func (c *Connection) FreeMemory(ctx context.Context, mem [][]byte) {
+	n := len(mem)
+	i := 0
+pushloop:
+	for ; i < n; i++ {
+		select {
+		case <-ctx.Done():
+			break pushloop
+		case c.memBlockCh <- mem[i]:
+			mem[i] = nil
+		default:
+			break pushloop
+		}
+	}
+	c.memBlocksMutex.Lock()
+	defer c.memBlocksMutex.Unlock()
+	for ; i < n; i++ {
+		mem[i] = nil
+		c.memBlocksAllocated--
+	}
 }
 
 // Zero memory
@@ -165,6 +226,44 @@ func (c *Connection) ZeroMemory(ctx context.Context, mem [][]byte) {
 	for i, _ := range mem {
 		for j, _ := range mem[i] {
 			mem[i][j] = 0
+		}
+	}
+}
+
+// periodically return all memory under the low water mark back to the OS
+func (c *Connection) ReturnMemory(ctx context.Context) {
+	defer func() {
+		c.memBlocksMutex.Lock()
+		c.logger.Printf("[INFO] ReturnMemory exiting for %s alloc=%d free=%d LWM=%d", c.name, c.memBlocksAllocated, len(c.memBlockCh), c.memBlocksFreeLWM)
+		c.memBlocksMutex.Unlock()
+		c.Kill(ctx)
+		c.wg.Done()
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+			c.memBlocksMutex.Lock()
+			freeBlocks := len(c.memBlockCh)
+			if freeBlocks < c.memBlocksFreeLWM {
+				c.memBlocksFreeLWM = freeBlocks
+			}
+			//c.logger.Printf("[DEBUG] Return memory for %s alloc=%d free=%d LWM=%d", c.name, c.memBlocksAllocated, freeBlocks, c.memBlocksFreeLWM)
+		returnloop:
+			for n := 0; n < c.memBlocksFreeLWM; n++ {
+				select {
+				case _, ok := <-c.memBlockCh:
+					if !ok {
+						return
+					}
+					c.memBlocksAllocated--
+				default:
+					break returnloop
+				}
+			}
+			c.memBlocksFreeLWM = freeBlocks
+			c.memBlocksMutex.Unlock()
 		}
 	}
 }
@@ -236,7 +335,10 @@ func (c *Connection) Receive(ctx context.Context) {
 		}
 
 		if req.flags&CMDT_REQ_PAYLOAD != 0 {
-			req.reqData = c.GetMemory(ctx, req.length)
+			if req.reqData = c.GetMemory(ctx, req.length); req.reqData == nil {
+				// error already logged
+				return
+			}
 			if req.length <= 0 {
 				c.logger.Printf("[ERROR] Client %s gave bad length", c.name)
 				return
@@ -267,12 +369,18 @@ func (c *Connection) Receive(ctx context.Context) {
 			}
 
 		} else if req.flags&CMDT_REQ_FAKE_PAYLOAD != 0 {
-			req.reqData = c.GetMemory(ctx, req.length)
+			if req.reqData = c.GetMemory(ctx, req.length); req.reqData == nil {
+				// error printed already
+				return
+			}
 			c.ZeroMemory(ctx, req.reqData)
 		}
 
 		if req.flags&CMDT_REP_PAYLOAD != 0 {
-			req.repData = c.GetMemory(ctx, req.length)
+			if req.repData = c.GetMemory(ctx, req.length); req.repData == nil {
+				// error printed already
+				return
+			}
 		}
 
 		atomic.AddInt64(&c.numInflight, 1) // one more in flight
@@ -512,6 +620,20 @@ func (c *Connection) Serve(parentCtx context.Context) {
 		c.wg.Wait()
 		close(c.rxCh)
 		close(c.txCh)
+		if c.memBlockCh != nil {
+		freemem:
+			for {
+				select {
+				case _, ok := <-c.memBlockCh:
+					if !ok {
+						break freemem
+					}
+				default:
+					break freemem
+				}
+			}
+			close(c.memBlockCh)
+		}
 		c.logger.Printf("[INFO] Closed connection from %s", c.name)
 	}()
 
@@ -519,6 +641,9 @@ func (c *Connection) Serve(parentCtx context.Context) {
 		c.logger.Printf("[INFO] Negotiation failed with %s: %v", c.name, err)
 		return
 	}
+
+	c.memBlocksMaximum = int64(((c.export.maximumBlockSize + c.export.memoryBlockSize - 1) / c.export.memoryBlockSize) * 2)
+	c.memBlockCh = make(chan []byte, c.memBlocksMaximum+1)
 
 	c.name = c.name + "/" + c.export.name
 
@@ -530,9 +655,10 @@ func (c *Connection) Serve(parentCtx context.Context) {
 
 	c.logger.Printf("[INFO] Negotiation succeeded with %s, serving with %d worker(s)", c.name, workers)
 
-	c.wg.Add(2)
+	c.wg.Add(3)
 	go c.Receive(ctx)
 	go c.Transmit(ctx)
+	go c.ReturnMemory(ctx)
 	for i := 0; i < workers; i++ {
 		c.wg.Add(1)
 		go c.Dispatch(ctx, i)
