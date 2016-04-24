@@ -34,6 +34,11 @@ func (afb *AioFileBackend) WriteAt(ctx context.Context, b []byte, offset int64, 
 	if err := afb.aio.Ack(requestId); err != nil {
 		return 0, err
 	}
+	if fua {
+		if err := afb.aio.Flush(); err != nil {
+			return 0, err
+		}
+	}
 	return len(b), err
 }
 
