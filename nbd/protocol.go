@@ -21,22 +21,22 @@ const (
 
 // NBD command flags
 const (
-	NBD_CMD_FLAG_FUA = 1 << 0
-	NBD_CMD_MAY_TRIM = 1 << 1
-	NBD_CMD_FLAG_DF  = 1 << 2
+	NBD_CMD_FLAG_FUA = uint16(1 << 0)
+	NBD_CMD_MAY_TRIM = uint16(1 << 1)
+	NBD_CMD_FLAG_DF  = uint16(1 << 2)
 )
 
 // NBD negotiation flags
 const (
-	NBD_FLAG_HAS_FLAGS         = 1 << 0
-	NBD_FLAG_READ_ONLY         = 1 << 1
-	NBD_FLAG_SEND_FLUSH        = 1 << 2
-	NBD_FLAG_SEND_FUA          = 1 << 3
-	NBD_FLAG_ROTATIONAL        = 1 << 4
-	NBD_FLAG_SEND_TRIM         = 1 << 5
-	NBD_FLAG_SEND_WRITE_ZEROES = 1 << 6
-	NBD_FLAG_SEND_DF           = 1 << 7
-	NBD_FLAG_SEND_CLOSE        = 1 << 8
+	NBD_FLAG_HAS_FLAGS         = uint16(1 << 0)
+	NBD_FLAG_READ_ONLY         = uint16(1 << 1)
+	NBD_FLAG_SEND_FLUSH        = uint16(1 << 2)
+	NBD_FLAG_SEND_FUA          = uint16(1 << 3)
+	NBD_FLAG_ROTATIONAL        = uint16(1 << 4)
+	NBD_FLAG_SEND_TRIM         = uint16(1 << 5)
+	NBD_FLAG_SEND_WRITE_ZEROES = uint16(1 << 6)
+	NBD_FLAG_SEND_DF           = uint16(1 << 7)
+	NBD_FLAG_SEND_CLOSE        = uint16(1 << 8)
 )
 
 // NBD magic numbers

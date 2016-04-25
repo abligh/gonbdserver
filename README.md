@@ -146,6 +146,8 @@ Each `export` item consists of the following (common to all drivers):
 * `minimumblocksize:` set to the minimum block size (must be a power of two). Optional, defaults to driver's minimum block size
 * `preferredblocksize:` set to the preferred block size (must be a power of two). Optional, defaults to driver's preferred block size
 * `maximumblocksize:` set to the maximum block size (must be a multiple of preferredblocksize). Optional, defaults to driver's maximum block size
+* `flush:` set to `true` to forcibly enable support of the flush command, even if the driver does not support it; set to `false` to forcibly disable support for the flush command, even if the driver does support it. Optional, defaults to unset (i.e. use the driver's own setting)
+* `fua:` set to `true` to forcibly enable support of the FUA (force unit access) flag, even if the driver does not support it; set to `false` to forcibly disable support for the FUA flag, even if the driver does support it. Optional, defaults to unset (i.e. use the driver's own setting)
 
 The `file` driver reads the disk from a file on the host OS's disks. It has the following options:
 

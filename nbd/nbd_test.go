@@ -27,6 +27,10 @@ servers:
     driver: {{.Driver}}
     path: {{.TempDir}}/nbd.img
     workers: 20
+{{if .NoFlush}}
+    flush: false
+    fua: false
+{{end}}
   - name: bar
     driver: rbd
     readonly: false
@@ -43,21 +47,24 @@ logging:
 `
 
 var longtests = flag.Bool("longtests", false, "enable long tests")
+var noFlush = flag.Bool("noflush", false, "Disable flush and FUA (for benchmarking - do not use in production")
 
 type TestConfig struct {
 	Tls     bool
 	TempDir string
 	Driver  string
+	NoFlush bool
 }
 
 type NbdInstance struct {
-	t           *testing.T
-	quit        chan struct{}
-	closed      bool
-	closedMutex sync.Mutex
-	plainConn   net.Conn
-	tlsConn     net.Conn
-	conn        net.Conn
+	t                 *testing.T
+	quit              chan struct{}
+	closed            bool
+	closedMutex       sync.Mutex
+	plainConn         net.Conn
+	tlsConn           net.Conn
+	conn              net.Conn
+	transmissionFlags uint16
 	TestConfig
 }
 
@@ -391,6 +398,10 @@ infoloop:
 				if err := binary.Read(ni.conn, binary.BigEndian, &transmissionFlags); err != nil {
 					return fmt.Errorf("Could not receive NBD_INFO_EXPORT transmission flags")
 				}
+				ni.transmissionFlags = transmissionFlags
+				t.Logf("Transmission flags: FLUSH=%v, FUA=%v",
+					transmissionFlags&NBD_FLAG_SEND_FLUSH != 0,
+					transmissionFlags&NBD_FLAG_SEND_FUA != 0)
 			default:
 				t.Logf("Ignoring info type %d", infotype)
 				if optReply.NbdOptReplyLength > 2 {
@@ -440,7 +451,7 @@ func (ni *NbdInstance) Disconnect(t *testing.T) error {
 }
 
 func doTestConnection(t *testing.T, tls bool) {
-	ni := StartNbd(t, TestConfig{Tls: tls})
+	ni := StartNbd(t, TestConfig{Tls: tls, NoFlush: *noFlush})
 	defer ni.Close()
 
 	if err := ni.Connect(t); err != nil {
@@ -468,7 +479,7 @@ func doTestConnectionIntegrity(t *testing.T, transationLog []byte, tls bool, dri
 		t.Skip(fmt.Sprintf("Skipping test as driver %s not built", driver))
 		return
 	}
-	ni := StartNbd(t, TestConfig{Tls: tls, Driver: driver})
+	ni := StartNbd(t, TestConfig{Tls: tls, Driver: driver, NoFlush: *noFlush})
 	defer ni.Close()
 
 	if err := ni.CreateFile(t, 50*1024*1024); err != nil {

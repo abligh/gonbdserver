@@ -166,14 +166,36 @@ var levelMap map[string]syslog.Priority = map[string]syslog.Priority{
 	"DEBUG":   syslog.LOG_DEBUG,
 }
 
-// isTruthy determines whether an argument is true
-func isSet(v string) (bool, error) {
+// isTrue determines whether an argument is true
+func isTrue(v string) (bool, error) {
 	if v == "true" {
 		return true, nil
 	} else if v == "false" || v == "" {
 		return false, nil
 	}
 	return false, fmt.Errorf("Unknown boolean value: %s", v)
+}
+
+// isFalse determines whether an argument is false
+func isFalse(v string) (bool, error) {
+	if v == "false" {
+		return true, nil
+	} else if v == "true" || v == "" {
+		return false, nil
+	}
+	return false, fmt.Errorf("Unknown boolean value: %s", v)
+}
+
+// isTrue determines whether an argument is true or fals
+func isTrueFalse(v string) (bool, bool, error) {
+	if v == "true" {
+		return true, false, nil
+	} else if v == "false" {
+		return false, true, nil
+	} else if v == "" {
+		return false, false, nil
+	}
+	return false, false, fmt.Errorf("Unknown boolean value: %s", v)
 }
 
 // Create a new syslog writer

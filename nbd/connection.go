@@ -1019,6 +1019,14 @@ func roundUpToNextPowerOfTwo(x uint64) uint64 {
 
 // connectExport generates an export for a given name, and connects to it using the chosen backend
 func (c *Connection) connectExport(ctx context.Context, ec *ExportConfig) (*Export, error) {
+	forceFlush, forceNoFlush, err := isTrueFalse(ec.DriverParameters["flush"])
+	if err != nil {
+		return nil, err
+	}
+	forceFua, forceNoFua, err := isTrueFalse(ec.DriverParameters["fua"])
+	if err != nil {
+		return nil, err
+	}
 	if backendgen, ok := BackendMap[strings.ToLower(ec.Driver)]; !ok {
 		return nil, fmt.Errorf("No such driver %s", ec.Driver)
 	} else {
@@ -1058,11 +1066,11 @@ func (c *Connection) connectExport(ctx context.Context, ec *ExportConfig) (*Expo
 			if maximumBlockSize < preferredBlockSize {
 				maximumBlockSize = preferredBlockSize
 			}
-			flags := uint16(NBD_FLAG_HAS_FLAGS | NBD_FLAG_SEND_FLUSH | NBD_FLAG_SEND_WRITE_ZEROES | NBD_FLAG_SEND_CLOSE)
-			if backend.HasFua(ctx) {
+			flags := uint16(NBD_FLAG_HAS_FLAGS | NBD_FLAG_SEND_WRITE_ZEROES | NBD_FLAG_SEND_CLOSE)
+			if (backend.HasFua(ctx) || forceFua) && !forceNoFua {
 				flags |= NBD_FLAG_SEND_FUA
 			}
-			if backend.HasFlush(ctx) {
+			if (backend.HasFlush(ctx) || forceFlush) && !forceNoFlush {
 				flags |= NBD_FLAG_SEND_FLUSH
 			}
 			size = size & ^(minimumBlockSize - 1)

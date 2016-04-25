@@ -122,6 +122,9 @@ func (it *IntegrityTest) Reader() {
 				cmd.NbdOffset &= ^uint64(BLOCKSIZE - 1)
 				cmd.NbdLength &= ^uint32(BLOCKSIZE - 1)
 				cmd.NbdHandle = getHandle()
+				if it.ni.transmissionFlags&NBD_FLAG_SEND_FUA == 0 {
+					cmd.NbdCommandFlags &= ^NBD_CMD_FLAG_FUA
+				}
 				if CmdTypeMap[int(cmd.NbdCommandType)]&CMDT_CHECK_LENGTH_OFFSET == 0 || cmd.NbdLength > 0 {
 					atomic.AddUint64(&it.statRead, 1)
 					select {

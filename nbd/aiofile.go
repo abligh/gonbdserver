@@ -96,7 +96,7 @@ func NewAioFileBackend(ctx context.Context, ec *ExportConfig) (Backend, error) {
 	if ec.ReadOnly {
 		perms = os.O_RDONLY
 	}
-	if s, err := isSet(ec.DriverParameters["sync"]); err != nil {
+	if s, err := isTrue(ec.DriverParameters["sync"]); err != nil {
 		return nil, err
 	} else if s {
 		perms |= os.O_SYNC
