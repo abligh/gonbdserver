@@ -13,9 +13,11 @@ Features
 * **Multithreaded**. Defaults to 5 worker threads per connection, so able to
   process requests in parallel.
   
+* **TLS support**. With client certificates if required.
+
 * **Ceph RBD support**. Almost entirely untested.
 
-* **TLS support**. With client certificates if required.
+* **Linux AIO support**. Experimental.
 
 * **Pluggable backends**. By default a file backend is provided, as well as
   a Ceph/RBD backend on linux, but it would be possible to supply any backend.
@@ -193,9 +195,9 @@ The `logging` item consists of the following:
 * `SyslogFacility:` the name of a syslog facility. Optional. If not specified, will not log to syslog. May not be specified together with `File:`.
 * `Date`: set to `true` to log the date, else set to `false`. Optional. Defaults to `false`. Note if logging to syslog, your syslog daemon may add the date anyway.
 * `Time`: set to `true` to log the time, else set to `false`. Optional. Defaults to `false`. Note if logging to syslog, your syslog daemon may add the time anyway.
-* `Time`: set to `true` to log the time in microseconds, else set to `false`. Optional. Defaults to `false`. Note if logging to syslog, your syslog daemon may add the time anyway.
-* `Time`: set to `true` to log the time in UTC, else set to `false`. Optional. Defaults to `false`. Note if logging to syslog, your syslog daemon may add the time anyway.
-* `SourceFile`: set to `true` to log the source file emiting the log message, else set to `false`. Optional. Defaults to `false`.
+* `Microseconds`: set to `true` to log the time in microseconds, else set to `false`. Optional. Defaults to `false`. Note if logging to syslog, your syslog daemon may add the time anyway.
+* `UTC`: set to `true` to log the time in UTC, else set to `false`. Optional. Defaults to `false`. Note if logging to syslog, your syslog daemon may add the time anyway.
+* `SourceFile`: set to `true` to log the source file emitting the log message, else set to `false`. Optional. Defaults to `false`.
 
 Licence
 -------
