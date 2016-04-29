@@ -357,13 +357,25 @@ func (ni *NbdInstance) Go(t *testing.T) error {
 	opt := nbdClientOpt{
 		NbdOptMagic: NBD_OPTS_MAGIC,
 		NbdOptId:    NBD_OPT_GO,
-		NbdOptLen:   uint32(len(export)),
+		NbdOptLen:   uint32(2 + 2*1 + 4 + len(export)),
 	}
 	if err = binary.Write(ni.conn, binary.BigEndian, opt); err != nil {
-		return fmt.Errorf("Could not send start go option")
+		return fmt.Errorf("Could not send go option")
+	}
+	var numInfoElements uint16 = 1
+	if err = binary.Write(ni.conn, binary.BigEndian, numInfoElements); err != nil {
+		return fmt.Errorf("Could not send number of elements for go option")
+	}
+	var infoElement uint16 = NBD_INFO_BLOCK_SIZE
+	if err = binary.Write(ni.conn, binary.BigEndian, infoElement); err != nil {
+		return fmt.Errorf("Could not send go info element")
+	}
+	var nameLength uint32 = uint32(len(export))
+	if err = binary.Write(ni.conn, binary.BigEndian, nameLength); err != nil {
+		return fmt.Errorf("Could not send go export length")
 	}
 	if err = binary.Write(ni.conn, binary.BigEndian, []byte(export)); err != nil {
-		return fmt.Errorf("Could not send start go option data")
+		return fmt.Errorf("Could not send go export name")
 	}
 infoloop:
 	for {

@@ -55,7 +55,6 @@ type Connection struct {
 	rxCh               chan Request          // a channel of requests that have been received, and need to be dispatched to a worker
 	txCh               chan Request          // a channel of outputs from the worker. By this time they have replies in that need to be transmitted
 	name               string                // the name of the connection for logging purposes
-	selectName         string                // the selected export name
 	disconnectReceived int64                 // nonzero if disconnect has been received
 	numInflight        int64                 // number of inflight requests
 
@@ -674,6 +673,24 @@ func (c *Connection) Serve(parentCtx context.Context) {
 	}
 }
 
+// skip bytes
+func skip(r io.Reader, n uint32) error {
+	for n > 0 {
+		l := n
+		if l > 1024 {
+			l = 1024
+		}
+		b := make([]byte, l)
+		if nr, err := io.ReadFull(r, b); err != nil {
+			return err
+		} else if nr != int(l) {
+			return errors.New("skip returned short read")
+		}
+		n -= l
+	}
+	return nil
+}
+
 // Negotiate negotiates a connection
 func (c *Connection) Negotiate(ctx context.Context) error {
 	c.conn.SetDeadline(time.Now().Add(c.params.ConnectionTimeout))
@@ -696,7 +713,6 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 		return errors.New("Cannot read client flags")
 	}
 
-	respectsBlocksizes := false
 	done := false
 	// now we get options
 	for !done {
@@ -707,21 +723,62 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 		if opt.NbdOptMagic != NBD_OPTS_MAGIC {
 			return errors.New("Bad option magic")
 		}
+		if opt.NbdOptLen > 65536 {
+			return errors.New("Option is too long")
+		}
 		switch opt.NbdOptId {
 		case NBD_OPT_EXPORT_NAME, NBD_OPT_INFO, NBD_OPT_GO:
-			name := make([]byte, opt.NbdOptLen)
-			n, err := io.ReadFull(c.conn, name)
-			if err != nil {
-				return err
-			}
-			if uint32(n) != opt.NbdOptLen {
-				return errors.New("Incomplete name")
-			}
+			var name []byte
 
-			if opt.NbdOptId == NBD_OPT_INFO {
-				c.selectName = string(name)
-			} else if opt.NbdOptId == NBD_OPT_GO && len(name) == 0 {
-				name = []byte(c.selectName)
+			clientSupportsBlockSizeConstraints := false
+
+			if opt.NbdOptId == NBD_OPT_EXPORT_NAME {
+				name = make([]byte, opt.NbdOptLen)
+				n, err := io.ReadFull(c.conn, name)
+				if err != nil {
+					return err
+				}
+				if uint32(n) != opt.NbdOptLen {
+					return errors.New("Incomplete name")
+				}
+			} else {
+				var numInfoElements uint16
+				if err := binary.Read(c.conn, binary.BigEndian, &numInfoElements); err != nil {
+					return errors.New("Bad number of info elements")
+				}
+				for i := uint16(0); i < numInfoElements; i++ {
+					var infoElement uint16
+					if err := binary.Read(c.conn, binary.BigEndian, &infoElement); err != nil {
+						return errors.New("Bad number of info elements")
+					}
+					switch infoElement {
+					case NBD_INFO_BLOCK_SIZE:
+						clientSupportsBlockSizeConstraints = true
+					}
+				}
+				var nameLength uint32
+				if err := binary.Read(c.conn, binary.BigEndian, &nameLength); err != nil {
+					return errors.New("Bad export name length")
+				}
+				if nameLength > 4096 {
+					return errors.New("Name is too long")
+				}
+				name = make([]byte, nameLength)
+				n, err := io.ReadFull(c.conn, name)
+				if err != nil {
+					return err
+				}
+				if uint32(n) != nameLength {
+					return errors.New("Incomplete name")
+				}
+				l := 2 + 2*uint32(numInfoElements) + 4 + uint32(nameLength)
+				if opt.NbdOptLen > l {
+					if err := skip(c.conn, opt.NbdOptLen-l); err != nil {
+						return err
+					}
+				} else if opt.NbdOptLen < l {
+					return errors.New("Option length too short")
+				}
 			}
 
 			if len(name) == 0 {
@@ -736,7 +793,7 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 					if err != nil {
 						return err
 					}
-					return errors.New("Attempt to connect to TLS-only connectoin without TLS")
+					return errors.New("Attempt to connect to TLS-only connection without TLS")
 				}
 				or := nbdOptReply{
 					NbdOptReplyMagic:  NBD_REP_MAGIC,
@@ -775,12 +832,6 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 					return errors.New("Cannot write export details")
 				}
 			} else {
-				// Warn if the c lient is trying to connect when it doesn't respect block sizes
-				if export.minimumBlockSize > 1 && !respectsBlocksizes && opt.NbdOptId == NBD_OPT_GO {
-					c.logger.Printf("[WARN] Client %s does not support block sizes but accessing export %s with minimum block size of %d",
-						c.name, export.name, export.minimumBlockSize)
-				}
-
 				// Send NBD_INFO_EXPORT
 				or := nbdOptReply{
 					NbdOptReplyMagic:  NBD_REP_MAGIC,
@@ -854,33 +905,40 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 					return errors.New("Cannot write info block size pt2")
 				}
 
-				// Send ACK
+				replyType := NBD_REP_ACK
+
+				if export.minimumBlockSize > 1 && !clientSupportsBlockSizeConstraints {
+					replyType = NBD_REP_ERR_BLOCK_SIZE_REQD
+				}
+
+				// Send ACK or error
 				or = nbdOptReply{
 					NbdOptReplyMagic:  NBD_REP_MAGIC,
 					NbdOptId:          opt.NbdOptId,
-					NbdOptReplyType:   NBD_REP_ACK,
+					NbdOptReplyType:   replyType,
 					NbdOptReplyLength: 0,
 				}
 				if err := binary.Write(c.conn, binary.BigEndian, or); err != nil {
 					return errors.New("Cannot info ack")
 				}
+				if opt.NbdOptId == NBD_OPT_INFO || or.NbdOptReplyType&NBD_REP_FLAG_ERROR != 0 {
+					// Disassociate the backend as we are not closing
+					c.backend.Close(ctx)
+					c.backend = nil
+					break
+				}
 			}
 
-			if opt.NbdOptId == NBD_OPT_INFO {
-				// Disassociate the backend as we are not closing
-				c.backend.Close(ctx)
-				c.backend = nil
-			} else {
-				if clf.NbdClientFlags&NBD_FLAG_C_NO_ZEROES == 0 && opt.NbdOptId == NBD_OPT_EXPORT_NAME {
-					// send 124 bytes of zeroes.
-					zeroes := make([]byte, 124, 124)
-					if err := binary.Write(c.conn, binary.BigEndian, zeroes); err != nil {
-						return errors.New("Cannot write zeroes")
-					}
+			if clf.NbdClientFlags&NBD_FLAG_C_NO_ZEROES == 0 && opt.NbdOptId == NBD_OPT_EXPORT_NAME {
+				// send 124 bytes of zeroes.
+				zeroes := make([]byte, 124, 124)
+				if err := binary.Write(c.conn, binary.BigEndian, zeroes); err != nil {
+					return errors.New("Cannot write zeroes")
 				}
-				c.export = export
-				done = true
 			}
+			c.export = export
+			done = true
+
 		case NBD_OPT_LIST:
 			for _, e := range c.listener.exports {
 				name := []byte(e.Name)
@@ -946,17 +1004,6 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 					return fmt.Errorf("TLS handshake failed: %s", err)
 				}
 			}
-		case NBD_OPT_BLOCK_SIZE:
-			or := nbdOptReply{
-				NbdOptReplyMagic:  NBD_REP_MAGIC,
-				NbdOptId:          opt.NbdOptId,
-				NbdOptReplyType:   NBD_REP_ACK,
-				NbdOptReplyLength: 0,
-			}
-			respectsBlocksizes = true
-			if err := binary.Write(c.conn, binary.BigEndian, or); err != nil {
-				return errors.New("Cannot send block size ack")
-			}
 		case NBD_OPT_ABORT:
 			or := nbdOptReply{
 				NbdOptReplyMagic:  NBD_REP_MAGIC,
@@ -970,13 +1017,8 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 			return errors.New("Connection aborted by client")
 		default:
 			// eat the option
-			discard := make([]byte, opt.NbdOptLen, opt.NbdOptLen)
-			n, err := io.ReadFull(c.conn, discard)
-			if err != nil {
+			if err := skip(c.conn, opt.NbdOptLen); err != nil {
 				return err
-			}
-			if uint32(n) != opt.NbdOptLen {
-				return errors.New("Could not discard option")
 			}
 			// say it's unsuppported
 			or := nbdOptReply{

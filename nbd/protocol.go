@@ -65,25 +65,22 @@ const (
 	NBD_OPT_INFO             = 6
 	NBD_OPT_GO               = 7
 	NBD_OPT_STRUCTURED_REPLY = 8
-	NBD_OPT_BLOCK_SIZE       = 9
 )
 
 // NBD option reply types
 const (
-	NBD_REP_ACK    = 1
-	NBD_REP_SERVER = 2
-	NBD_REP_INFO   = 3
-)
-
-// NBD option reply types
-const (
-	NBD_REP_FLAG_ERROR   = 1 << 31
-	NBD_REP_ERR_UNSUP    = 1 | NBD_REP_FLAG_ERROR
-	NBD_REP_ERR_POLICY   = 2 | NBD_REP_FLAG_ERROR
-	NBD_REP_ERR_INVALID  = 3 | NBD_REP_FLAG_ERROR
-	NBD_REP_ERR_PLATFORM = 4 | NBD_REP_FLAG_ERROR
-	NBD_REP_ERR_TLS_REQD = 5 | NBD_REP_FLAG_ERROR
-	NBD_REP_ERR_UNKNOWN  = 6 | NBD_REP_FLAG_ERROR
+	NBD_REP_ACK                 = uint32(1)
+	NBD_REP_SERVER              = uint32(2)
+	NBD_REP_INFO                = uint32(3)
+	NBD_REP_FLAG_ERROR          = uint32(1 << 31)
+	NBD_REP_ERR_UNSUP           = uint32(1 | NBD_REP_FLAG_ERROR)
+	NBD_REP_ERR_POLICY          = uint32(2 | NBD_REP_FLAG_ERROR)
+	NBD_REP_ERR_INVALID         = uint32(3 | NBD_REP_FLAG_ERROR)
+	NBD_REP_ERR_PLATFORM        = uint32(4 | NBD_REP_FLAG_ERROR)
+	NBD_REP_ERR_TLS_REQD        = uint32(5 | NBD_REP_FLAG_ERROR)
+	NBD_REP_ERR_UNKNOWN         = uint32(6 | NBD_REP_FLAG_ERROR)
+	NBD_REP_ERR_SHUTDOWN        = uint32(7 | NBD_REP_FLAG_ERROR)
+	NBD_REP_ERR_BLOCK_SIZE_REQD = uint32(8 | NBD_REP_FLAG_ERROR)
 )
 
 // NBD reply flags
