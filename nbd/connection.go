@@ -805,7 +805,7 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 					or.NbdOptReplyType = NBD_REP_ERR_TLS_REQD
 				}
 				if err := binary.Write(c.conn, binary.BigEndian, or); err != nil {
-					return errors.New("Cannot send list ack")
+					return errors.New("Cannot send info error")
 				}
 				break
 			}
@@ -815,7 +815,19 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 			// connection (assuming we aren't doing NBD_OPT_INFO)
 			export, err := c.connectExport(ctx, ec)
 			if err != nil {
-				return err
+				if opt.NbdOptId == NBD_OPT_EXPORT_NAME {
+					return err
+				}
+				or := nbdOptReply{
+					NbdOptReplyMagic:  NBD_REP_MAGIC,
+					NbdOptId:          opt.NbdOptId,
+					NbdOptReplyType:   NBD_REP_ERR_UNKNOWN,
+					NbdOptReplyLength: 0,
+				}
+				if err := binary.Write(c.conn, binary.BigEndian, or); err != nil {
+					return errors.New("Cannot send info error")
+				}
+				break
 			}
 
 			// for the reply
