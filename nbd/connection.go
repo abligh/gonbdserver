@@ -818,6 +818,7 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 				if opt.NbdOptId == NBD_OPT_EXPORT_NAME {
 					return err
 				}
+				c.logger.Printf("[INFO] Could not connect client %s to %s: %v", c.name, string(name), err)
 				or := nbdOptReply{
 					NbdOptReplyMagic:  NBD_REP_MAGIC,
 					NbdOptId:          opt.NbdOptId,
