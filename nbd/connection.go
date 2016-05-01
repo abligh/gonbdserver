@@ -718,7 +718,7 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 	for !done {
 		var opt nbdClientOpt
 		if err := binary.Read(c.conn, binary.BigEndian, &opt); err != nil {
-			return errors.New("Cannot read option")
+			return errors.New("Cannot read option (perhaps client dropped the connection)")
 		}
 		if opt.NbdOptMagic != NBD_OPTS_MAGIC {
 			return errors.New("Bad option magic")
