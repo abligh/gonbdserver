@@ -699,7 +699,11 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 	nsh := nbdNewStyleHeader{
 		NbdMagic:       NBD_MAGIC,
 		NbdOptsMagic:   NBD_OPTS_MAGIC,
-		NbdGlobalFlags: NBD_FLAG_FIXED_NEWSTYLE | NBD_FLAG_NO_ZEROES,
+		NbdGlobalFlags: NBD_FLAG_FIXED_NEWSTYLE,
+	}
+
+	if !c.listener.disableNoZeroes {
+		nsh.NbdGlobalFlags |= NBD_FLAG_NO_ZEROES
 	}
 
 	if err := binary.Write(c.conn, binary.BigEndian, nsh); err != nil {

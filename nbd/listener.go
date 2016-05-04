@@ -17,13 +17,14 @@ import (
 
 // A single listener on a given net.Conn address
 type Listener struct {
-	logger        *log.Logger    // a logger
-	protocol      string         // the protocol we are listening on
-	addr          string         // the address
-	exports       []ExportConfig // a list of export configurations associated
-	defaultExport string         // name of default export
-	tls           TlsConfig      // the TLS configuration
-	tlsconfig     *tls.Config    // the TLS configuration
+	logger          *log.Logger    // a logger
+	protocol        string         // the protocol we are listening on
+	addr            string         // the address
+	exports         []ExportConfig // a list of export configurations associated
+	defaultExport   string         // name of default export
+	tls             TlsConfig      // the TLS configuration
+	tlsconfig       *tls.Config    // the TLS configuration
+	disableNoZeroes bool           // disable the 'no zeroes' extension
 }
 
 // An listener type that does what we want
@@ -173,12 +174,13 @@ func (l *Listener) initTls() error {
 // NewListener returns a new listener object
 func NewListener(logger *log.Logger, s ServerConfig) (*Listener, error) {
 	l := &Listener{
-		logger:        logger,
-		protocol:      s.Protocol,
-		addr:          s.Address,
-		exports:       s.Exports,
-		defaultExport: s.DefaultExport,
-		tls:           s.Tls,
+		logger:          logger,
+		protocol:        s.Protocol,
+		addr:            s.Address,
+		exports:         s.Exports,
+		defaultExport:   s.DefaultExport,
+		disableNoZeroes: s.DisableNoZeroes,
+		tls:             s.Tls,
 	}
 	if err := l.initTls(); err != nil {
 		return nil, err

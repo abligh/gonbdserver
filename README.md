@@ -111,6 +111,7 @@ servers:
     driver: file                 # using the file driver
     path: /tmp/baz               # on this file
     sync: true                   # open with O_SYNC
+  disablenozeroes: true          # disable nozereos for back compatibility
 logging:                         # log to
   syslogfacility: local1         # local1
 ```    
@@ -133,6 +134,7 @@ Each `server` item consists of the following:
 * `exports:` a list of zero or more `export` items each representing an export to be served by this server. This section is optional (and can be empty), but the server will be of little use if so.
 * `defaultexport:` the name of the default export, which should be selected if no name is specified by the client. Optional, defaults to none.
 * `tls:` a TLS item
+* `disablenozeroes:`: disable `NBD_FLAG_NO_ZEROES` for back compatibility with nbd client prior to 3.10, where in error this was sent to the kernel as a 'read-only' flag. Optional, defaults to false.
 
 #### `export` items
 

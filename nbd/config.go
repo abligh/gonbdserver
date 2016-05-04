@@ -75,11 +75,12 @@ type Config struct {
 
 // ServerConfig holds the config that applies to each server (i.e. listener)
 type ServerConfig struct {
-	Protocol      string         // protocol it should listen on (in net.Conn form)
-	Address       string         // address to listen on
-	DefaultExport string         // name of default export
-	Exports       []ExportConfig // array of configurations of exported items
-	Tls           TlsConfig      // TLS configuration
+	Protocol        string         // protocol it should listen on (in net.Conn form)
+	Address         string         // address to listen on
+	DefaultExport   string         // name of default export
+	Exports         []ExportConfig // array of configurations of exported items
+	Tls             TlsConfig      // TLS configuration
+	DisableNoZeroes bool           // Disable NoZereos extension
 }
 
 // ExportConfig holds the config for one exported item
