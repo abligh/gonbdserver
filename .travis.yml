@@ -9,3 +9,6 @@ go:
 
 script:
  - go test -tags noceph -v ./...
+
+install:
+ - go get -t -tags noceph ./...
