@@ -28,7 +28,8 @@ func (afb *AioFileBackend) WriteAt(ctx context.Context, b []byte, offset int64, 
 	if err != nil {
 		return 0, err
 	}
-	if err := afb.aio.WaitFor(requestId); err != nil {
+	n, err := afb.aio.WaitFor(requestId)
+	if err != nil {
 		return 0, err
 	}
 	if fua {
@@ -36,7 +37,7 @@ func (afb *AioFileBackend) WriteAt(ctx context.Context, b []byte, offset int64, 
 			return 0, err
 		}
 	}
-	return len(b), err
+	return n, err
 }
 
 // ReadAt implements Backend.ReadAt
@@ -48,10 +49,11 @@ func (afb *AioFileBackend) ReadAt(ctx context.Context, b []byte, offset int64) (
 	if err != nil {
 		return 0, err
 	}
-	if err := afb.aio.WaitFor(requestId); err != nil {
+	n, err := afb.aio.WaitFor(requestId)
+	if err != nil {
 		return 0, err
 	}
-	return len(b), err
+	return n, err
 }
 
 // TrimAt implements Backend.TrimAt
