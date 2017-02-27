@@ -1,10 +1,14 @@
-// +build linux,!noceph
+// +build ceph
 
-// The above build tag specifies this file is only to be built on linux (because
-// building librados is difficult elsewhere). If you want it to build elsewhere,
-// add your OS as appropriately. If you are having difficulty building on linux
-// or want to build without librados present, then use
-//    go build -tags 'noceph'
+// The above build tag specifies this file is only to be built
+// when the `ceph` tag is explicitly specified, as follows:
+//    go build -tags 'ceph'
+//
+// NOTE: at the time of writing it is difficult to build librados
+// on platforms other than Linux. In case you want to build this file,
+// (and thus use go-ceph) it is recommended to do this on Linux.
+// Other platforms may work (with some work) but is not guaranteed.
+// You have been warned.
 
 package nbd
 
