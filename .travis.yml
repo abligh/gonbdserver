@@ -1,14 +1,12 @@
 language: go
 
-gobuild_args: -tags noceph
-
 go:
   - 1.5
   - 1.6
   - tip
 
 script:
- - go test -tags noceph -v ./...
+ - go test -v ./...
 
 install:
- - go get -t -tags noceph ./...
+ - go get -t ./...
