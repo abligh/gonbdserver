@@ -482,7 +482,11 @@ func (c *Connection) Dispatch(ctx context.Context, n int) {
 					length -= blocklen
 				}
 			case NBD_CMD_FLUSH:
-				c.backend.Flush(ctx)
+				if err := c.backend.Flush(ctx); err != nil {
+					c.logger.Printf("[WARN] Client %s got flush I/O error: %s", c.name, err)
+					req.nbdRep.NbdError = NbdError(err)
+					break
+				}
 			case NBD_CMD_TRIM:
 				for i := 0; length > 0; i++ {
 					blocklen := c.export.memoryBlockSize
