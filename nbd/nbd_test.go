@@ -362,6 +362,13 @@ func (ni *NbdInstance) Go(t *testing.T) error {
 	if err = binary.Write(ni.conn, binary.BigEndian, opt); err != nil {
 		return fmt.Errorf("Could not send go option")
 	}
+	var nameLength uint32 = uint32(len(export))
+	if err = binary.Write(ni.conn, binary.BigEndian, nameLength); err != nil {
+		return fmt.Errorf("Could not send go export length")
+	}
+	if err = binary.Write(ni.conn, binary.BigEndian, []byte(export)); err != nil {
+		return fmt.Errorf("Could not send go export name")
+	}
 	var numInfoElements uint16 = 1
 	if err = binary.Write(ni.conn, binary.BigEndian, numInfoElements); err != nil {
 		return fmt.Errorf("Could not send number of elements for go option")
@@ -369,13 +376,6 @@ func (ni *NbdInstance) Go(t *testing.T) error {
 	var infoElement uint16 = NBD_INFO_BLOCK_SIZE
 	if err = binary.Write(ni.conn, binary.BigEndian, infoElement); err != nil {
 		return fmt.Errorf("Could not send go info element")
-	}
-	var nameLength uint32 = uint32(len(export))
-	if err = binary.Write(ni.conn, binary.BigEndian, nameLength); err != nil {
-		return fmt.Errorf("Could not send go export length")
-	}
-	if err = binary.Write(ni.conn, binary.BigEndian, []byte(export)); err != nil {
-		return fmt.Errorf("Could not send go export name")
 	}
 infoloop:
 	for {

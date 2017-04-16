@@ -750,20 +750,6 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 					return errors.New("Incomplete name")
 				}
 			} else {
-				var numInfoElements uint16
-				if err := binary.Read(c.conn, binary.BigEndian, &numInfoElements); err != nil {
-					return errors.New("Bad number of info elements")
-				}
-				for i := uint16(0); i < numInfoElements; i++ {
-					var infoElement uint16
-					if err := binary.Read(c.conn, binary.BigEndian, &infoElement); err != nil {
-						return errors.New("Bad number of info elements")
-					}
-					switch infoElement {
-					case NBD_INFO_BLOCK_SIZE:
-						clientSupportsBlockSizeConstraints = true
-					}
-				}
 				var nameLength uint32
 				if err := binary.Read(c.conn, binary.BigEndian, &nameLength); err != nil {
 					return errors.New("Bad export name length")
@@ -778,6 +764,20 @@ func (c *Connection) Negotiate(ctx context.Context) error {
 				}
 				if uint32(n) != nameLength {
 					return errors.New("Incomplete name")
+				}
+				var numInfoElements uint16
+				if err := binary.Read(c.conn, binary.BigEndian, &numInfoElements); err != nil {
+					return errors.New("Bad number of info elements")
+				}
+				for i := uint16(0); i < numInfoElements; i++ {
+					var infoElement uint16
+					if err := binary.Read(c.conn, binary.BigEndian, &infoElement); err != nil {
+						return errors.New("Bad number of info elements")
+					}
+					switch infoElement {
+					case NBD_INFO_BLOCK_SIZE:
+						clientSupportsBlockSizeConstraints = true
+					}
 				}
 				l := 2 + 2*uint32(numInfoElements) + 4 + uint32(nameLength)
 				if opt.NbdOptLen > l {
