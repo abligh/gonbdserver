@@ -1,148 +1,114 @@
 package nbd
 
-const testClientKey = `
------BEGIN RSA PRIVATE KEY-----
-MIIFewIBAAKCATEAv/0IYsxRwCYX3xjF3JF4PMibdgI+GxjFRm1LghgkKkI8DEN5
-WiiyskAT3AGIlK0Hp5LoXc5UZjKEIiAxP1BikL4K6UEvm3Nv6JubUB0ScWdkREp7
-vsw5rm3bJr51lgGm5HwWwV5/aavkWbzDDPHKZw8jL7/XUG/Zlj7ZyUmgqGSCni+l
-QQRbVMYViM9UhjfxpMcp7A1nqWSd2GLX7TD+XHbnnGDwTWy+eNwuzI7oRiio6hzw
-olcWW39x4VnWUuVnjMrZTze5i3WjYFw/0C+N3KRVEIZr/w3YhliMOiM98VAa5SOL
-638pWzRnQjtSulQwTc/ySBjaRMVHMl6JPsMSfwx4yGJJz5QiLRzfbMpvoBeFFk6k
-cOxaxFF/t6d/JWc+QnGYnUWJolvZSIGWfXf8TQIDAQABAoIBL0denj9xX505NqaO
-Dv/FFBgvJZuOOd2Dgn0rzrtjPg53kNr+OkkfLU7A2KEbRiqpfVmjbb4cIEPdg5aB
-YSKoP1E5/ym25yZimLdfy9zRnImLuzpSdgNM6CRvsjLfmoFTxowplPaiqmVzVkVb
-ESc+uynp9qqe0OvrUyJckEQY8CBT54/me7Laa8PtNGl8qW87shi58QZPSrnX3LP/
-Y7ojW0XngFsPWqmHBYxBWb3+PO/QuJYQzEb24E/E+4LOGuhTg8ylDqrcbnhzkHEH
-/XcG1sIltsHr6Ai20l+JG50KJ0zYMSGg48HuUZYegW+9AI8H7OgZIY8OlXHp5cuw
-lyZZeQm1/5EZIeirJoHp3dh42RkT5v44Xz1ocBMwZrdeuoJlmWHrbswTcKyO8Cfb
-UWvNXwKBmQDDg77I0O/7d4LlYEauP3adsG0mp+kV6tWxzMnv3c0aA8FkHUVoHK/9
-JWm+v5qJ5v3l8H9wA+non7RYcJjnATr4CtOnF3EFFDrcYL//nmWMJuayOtKiRhMq
-Dhub++qJaZm1lxaEt7KRaY7tQZ6ZrBo6EOWu0H0nky17xe3fFM93ORvWp7Mwkxkm
-b1BbtO/10JU0+sapWQdHTwKBmQD7YgUZRBTZcCHlvQ7u9oSnFM10pb2jBYxgSkiN
-99cimwyeRcWo0fdOROBeUREJ/KgRHY9u97cnYqJ/y4AiB1zna8NDyC8JxVOVjy8J
-Psma6n7G0A5KVMgELM+Vif5onNu9bcOd13puG7igv3GOC80jQ/IJW0dhatDtxmjB
-bqNcMTN7lix/UPV6mpbAIpgwg1I4k1NuaZvbowKBmQC/zzVRwCFf/ByPucc91Yci
-Jt6+qMZ0OSISv81xJJG+LucAt/LKtDI30QeQGlubZOG8PxhXJY/KJzv/898d6kgW
-5lBEwiugBvvEDqruNVB8kgGL40eX6dWNUa/mdNvgmZgx3Zs68xkdrYiJ3PGi44QL
-aV5cBbBzLeHWZxT54Wm0FnPoQDf8tKNc4KHehoFQEKUBB/H0XCJW4wKBmHxPBGZy
-HD1KDfklfHT+wqo8xzyfmR88ZyZWlXpezKv4ME00A4JwEfNKbAk33U0q+5E7JOqi
-5Jc9V04Ku9oX+gEWcQDbxSb3xVV38LKJsfhBbV+zEt3+/snRvvUbwArLRn5uAQXU
-wF4ipzIWeXjcrRx7RP0LfkjWIWrzamn85Bt62RKMOITc7Acs2s84TDnxNn9zmxZG
-cyQxAoGZAI4mAR8HYlyTfFzN5L0e4dPrTQbXBZHD/B+gPdjrsy+3/mnkxumotvsa
-Wa4ruXXLlkUQ+enYryax+c1ZW/2AdQ0EDGKIdKy/RwzvLeS0ZhGKhC7CJVK2ezCC
-X3u+0MmYMPxT7cmFj8q6eRgNpzCbsANKSqpzX+52jiiQxR0bE+cfWCNy7yBBYJCy
-z0QrsAtohslE1CjcXeXb
------END RSA PRIVATE KEY-----
-`
+import (
+	"bytes"
+	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"math/big"
+	"os"
+	"time"
+)
 
-const testClientCert = `
------BEGIN CERTIFICATE-----
-MIID0DCCAoigAwIBAgIEVxYY2jANBgkqhkiG9w0BAQsFADAVMRMwEQYDVQQDEwpB
-bGV4IEJsaWdoMB4XDTE2MDQxOTExMzkwNloXDTE3MDQxOTExMzkwNlowZzELMAkG
-A1UEBhMCR0IxIjAgBgNVBAoTGU5hbWUgb2YgeW91ciBvcmdhbml6YXRpb24xDzAN
-BgNVBAcTBkxvbmRvbjEPMA0GA1UECBMGTG9uZG9uMRIwEAYDVQQDEwlsb2NhbGhv
-c3QwggFSMA0GCSqGSIb3DQEBAQUAA4IBPwAwggE6AoIBMQC//QhizFHAJhffGMXc
-kXg8yJt2Aj4bGMVGbUuCGCQqQjwMQ3laKLKyQBPcAYiUrQenkuhdzlRmMoQiIDE/
-UGKQvgrpQS+bc2/om5tQHRJxZ2RESnu+zDmubdsmvnWWAabkfBbBXn9pq+RZvMMM
-8cpnDyMvv9dQb9mWPtnJSaCoZIKeL6VBBFtUxhWIz1SGN/GkxynsDWepZJ3YYtft
-MP5cduecYPBNbL543C7MjuhGKKjqHPCiVxZbf3HhWdZS5WeMytlPN7mLdaNgXD/Q
-L43cpFUQhmv/DdiGWIw6Iz3xUBrlI4vrfylbNGdCO1K6VDBNz/JIGNpExUcyXok+
-wxJ/DHjIYknPlCItHN9sym+gF4UWTqRw7FrEUX+3p38lZz5CcZidRYmiW9lIgZZ9
-d/xNAgMBAAGjdjB0MAwGA1UdEwEB/wQCMAAwEwYDVR0lBAwwCgYIKwYBBQUHAwIw
-DwYDVR0PAQH/BAUDAwegADAdBgNVHQ4EFgQU1hIpx3H8zyir+Mw8/GOzrrkdieMw
-HwYDVR0jBBgwFoAUyZoeZBqcOBjqU1+lEWI+EIIkZdgwDQYJKoZIhvcNAQELBQAD
-ggExAELOkm/uilBs1zYu0ZkigAk06PDp+ufF4FVu//FFDZb9U66Lk94XCXDW5mHg
-5Kx5B4kAqKzH5xWyIdcEmmap8TRZ5wkPOSwOkaMEjcm6JnWqjIcprZ34QIYQKJzX
-N+5SVZRKnpm7ClJe+cvkm8fskGW1swKHGPz3O4IQK4IVEhzu2B8Cr5E+s186fd8B
-x6e0CBRk8PjGX5R5rhJWWPqMQMKkJhxjj+NKtPF7833bXqiODHuhYv1cjHz/1mJW
-3dfRGDnQzIJX8Kq+blILbs/Fl815jvVp6kL7pqQa9ABHh+5XvKOvikP5VpyYGs2G
-qaZiL9fRLbK/QQ9777BW19+Cz8F0gjfQIlj16DmtRlF7GUmc+q8yVhrOoohyiZHC
-sy14maMc7AA/Bwv0eRtfkyGbLOg=
------END CERTIFICATE-----
-`
+// taken from pkg/crypto/tls/generate_cert.go
+func publicKey(priv interface{}) interface{} {
+	switch k := priv.(type) {
+	case *rsa.PrivateKey:
+		return &k.PublicKey
+	case *ecdsa.PrivateKey:
+		return &k.PublicKey
+	default:
+		return nil
+	}
+}
 
-const testServerKey = `
------BEGIN RSA PRIVATE KEY-----
-MIIFewIBAAKCATEA190qI8Ict55jeto3EumIxub2y/Ae9CWz5EAhUWQFVQc1IWxI
-l08Q2N2cFy89kagZ2DiDsScm6QZumiE/PyP7y5pXlSOn/DZ+p/K+i9LNznGHuEZQ
-qYLIXwhsI+xEMa+KP65NgM/vAnpn5ZdaJCSJR2pGL1Iajszix+n37M8jMMvEopo0
-Wjj+GjnIkm/PPLIfOXnrR+pBrE8np4p7JvcJnW3qFt+zy7GIo3f99wjkaMjEl0Eu
-d5DpF9n0VcRItRfNCRLLTT7IOfcl6M+/dWGa/pIuKdhpoNmwZxzdGc9hQDlr+QLT
-pW8M1xzx0Mfq0rJIOfSpSSXw007iwAqDYVd8D3Ai6zmVY5CjRypzyngiAYc02QZH
-o80U15JoC71lgh5RTFSopXDClgBJ0grMBNXvtwIDAQABAoIBMEKCbcfruI5oukzx
-bDOjCdYC9rqaRudBsJ4clkduEmiC2n9sTid0oIO5MC1CjG1TBneE3iqYnhgBN9W8
-dbC+JQg0C1Uz0b/XiIm1tLj/IBNCDqeb3qGD3rnNLgiZdN98LxP04ANWzdUNIvLu
-AcOOEFAVMf/Fg9JI1Xz0HUP1BGo19mWFLqk30y8Aa8iWs5sHZLCAXJphVo/AmGZW
-GgpHXGohNeEuafE85J36qSXiyQ/J2kglWXdT0h1hbAyIRmN7BakOou1TAlDz9+2a
-IujOZgQrEnSeZlKv7aUKTUpTE4kwoKOQLZ3YB7cRma3CaDoZ6dSyDC9a1zTNeLjz
-sS0wn/46O+QkYQxNoxiBHj6vzWWplC+y6/c+7UZF5NDfogSQ7BZEKHiKK0zu1xTW
-8fQ3C8UCgZkA2J3qbwdi/Jtg22RSceIyaTwhe2UVhF9PKljx304vmH2lvbBEklHP
-eiB98FOLlu6AgxWqOi/BokFRzJHMszCRPCZFes4sbzts4PKiX8PAGVdoHXYjPdak
-lerAxS7W/lK5cn5wQyUsc7ljb45rA/J8T8tQ89o4qRMicGa/MHxagJVvUVX0Xev6
-3qPUTb8SOB1ye2oB5uSCxVUCgZkA/xw0abUUCFLYnWbxZjNshqK8r8KabviBsk5j
-4Li4UxQOzticw9k9UU3Ct9hgcQ8jVKBLXTxT+cwKCrc3ZTWwRrOkHct1IQM7L5hk
-LX5BKL6+XDaJCbRwr9+zkopOJ3TUOdFo7pWDJgRjTWhnYTMgSf+14/hceoD1KKMM
-aik3ru/FwJkQYFYLtNj3V1j4VuVHSOyOqbcaoNsCgZhMV3M8yBSpxDThfTzVKAvu
-LKP8MgbgTRrAaPJtace6bWXRMWMpUi3V88eOwFLs0Yd3K1aABT6v6WdjumqzKEW3
-NiG8gxcD6KSZrsltCLcV90kZQP5wl8oPj9l6ZOSeYxc6c7cq4toEuuyBb2bl0Drh
-gF06Y8keRUEY7g0pkFnxATlnJ+zkgPs8Je73q4RHRJGJTzX2Ysh3tQKBmQDe8A79
-sbjn7T5Pj362CYp1vhGWp0G+aH0vDUJLSCIMuCKYsMOOg3IKcyIO95CQPOJrOgmi
-WO4qBh1gb+yBDgIWRzbMstiRGPnIBizFdOgMa2R/wUjQqlcv2xZaoXLbGEW+oTpK
-BW6u8na1Vt/BGaTGBik2J/zpMXkNIi/fNlXrEq6GOT0OcyOXz2OXebDMf2FkYRXr
-SpCCsQKBmDbHnS3b4mQH7I6hDVCYT7zyQeyEwMjufkf/vnbsh4V6J5Sq2gtd9epl
-qsKCCTPZaGdkZoOO7CGFJawlzm7Htm9Y1bmZUTBHz61x/+cDPp8IL6qAMod23WSD
-8R/Rv9nJLJqH+LnQ/Bvfwl2eKyJquinbTgirdmdyDkmbsKJfHOKcCBtAYSnGWBg0
-hag+Jq3uH47luVKswO+V
------END RSA PRIVATE KEY-----
-`
+// taken from pkg/crypto/tls/generate_cert.go
+func pemBlockForKey(priv interface{}) *pem.Block {
+	switch k := priv.(type) {
+	case *rsa.PrivateKey:
+		return &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(k)}
+	case *ecdsa.PrivateKey:
+		b, err := x509.MarshalECPrivateKey(k)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Unable to marshal ECDSA private key: %v", err)
+			os.Exit(2)
+		}
+		return &pem.Block{Type: "EC PRIVATE KEY", Bytes: b}
+	default:
+		return nil
+	}
+}
 
-const testServerCert = `
------BEGIN CERTIFICATE-----
-MIIDoTCCAlmgAwIBAgIEVxYYzTANBgkqhkiG9w0BAQsFADAVMRMwEQYDVQQDEwpB
-bGV4IEJsaWdoMB4XDTE2MDQxOTExMzg1M1oXDTI2MDQxNzExMzg1M1owODEiMCAG
-A1UEChMZTmFtZSBvZiB5b3VyIG9yZ2FuaXphdGlvbjESMBAGA1UEAxMJbG9jYWxo
-b3N0MIIBUjANBgkqhkiG9w0BAQEFAAOCAT8AMIIBOgKCATEA190qI8Ict55jeto3
-EumIxub2y/Ae9CWz5EAhUWQFVQc1IWxIl08Q2N2cFy89kagZ2DiDsScm6QZumiE/
-PyP7y5pXlSOn/DZ+p/K+i9LNznGHuEZQqYLIXwhsI+xEMa+KP65NgM/vAnpn5Zda
-JCSJR2pGL1Iajszix+n37M8jMMvEopo0Wjj+GjnIkm/PPLIfOXnrR+pBrE8np4p7
-JvcJnW3qFt+zy7GIo3f99wjkaMjEl0Eud5DpF9n0VcRItRfNCRLLTT7IOfcl6M+/
-dWGa/pIuKdhpoNmwZxzdGc9hQDlr+QLTpW8M1xzx0Mfq0rJIOfSpSSXw007iwAqD
-YVd8D3Ai6zmVY5CjRypzyngiAYc02QZHo80U15JoC71lgh5RTFSopXDClgBJ0grM
-BNXvtwIDAQABo3YwdDAMBgNVHRMBAf8EAjAAMBMGA1UdJQQMMAoGCCsGAQUFBwMB
-MA8GA1UdDwEB/wQFAwMHoAAwHQYDVR0OBBYEFLkZ9EimCBJwP1HidVQzLyCOS2y1
-MB8GA1UdIwQYMBaAFMmaHmQanDgY6lNfpRFiPhCCJGXYMA0GCSqGSIb3DQEBCwUA
-A4IBMQBFmq3zn64V6+k+O141gwsyJ6me7ag4zitCIdx3moh/GVQ3Y746IMu3KMI2
-nxIdwyTahI97TsuIek9D/QDME7NylnHBSP+/h5ptV/zFFvYxAinCP8AHtca5WKBk
-TiB22V3Oq4Ywg5gVJucuM6O9j6LhvDv/9g4Jsy1SzPK1GLa/XhojFAcwVYfaCsax
-BiZkeMV/yLnoIi6MLUWf7qR7+b6XFKTedgAUT2j2C6VfNk8PBNG+uVAKThFWDrv6
-yf9zMD9aNRjYlwFFUwFE58OF9frSZJMS9abx6ELCBqv9ElFnGAH1J0/CPKFNuuIQ
-qgnOmhzjurvOge3mxpP37PRnYr/HgwtslIYR8vRTnBtZTvbL5lYE1bqIwlyXisdL
-daDNOxFgThSfts25XQxtTJPe0IEd
------END CERTIFICATE-----
-`
+// taken and modified from pkg/crypto/tls/generate_cert.go
+func genTestCertificate() (key, cert string) {
+	const (
+		host    = "localhost"
+		rsaBits = 2043
+	)
 
-const testCaCert = `
------BEGIN CERTIFICATE-----
-MIIDSzCCAgOgAwIBAgIEVxYYwDANBgkqhkiG9w0BAQsFADAVMRMwEQYDVQQDEwpB
-bGV4IEJsaWdoMB4XDTE2MDQxOTExMzg0MFoXDTI2MDQxNzExMzg0MFowFTETMBEG
-A1UEAxMKQWxleCBCbGlnaDCCAVIwDQYJKoZIhvcNAQEBBQADggE/ADCCAToCggEx
-ANspvmeoHnuXaYQlrqaAXtt1SLkXqj4HLEPj8gNc1Aqj5wnQrTFZwiqPzd7lZI+L
-uN/pWZ+0vFiZrjGJ4JtzIFJMR1Xe7iFw0YFDzxnQX9BWyA2G5LdKa4tyL1eIEK0r
-FAFKtzDn+t3NHKJQDRSzOruzyNxEqrGP8Amv5Cwgakob5Dw+GMMJM60unkrLG+PX
-Nv8+XcXdgF28PPUdewSuIXA+yRusakj9Oc9XalLMc3Bvx+GNeljawqQmrQmhGZEN
-cCU5gMSF911SaahqRdITC+Xy6puSV3v9om2qVuAezH7BBd3ZHMtKZFpA++99cdlJ
-9pzhyCPagsqz2KWayrlqcUH7Tk/yu4dOs7vFbzs+8frRvCfrae35/Q2gWPDfh+I3
-PLDZ8vfQvoTBAdVnO4CqgBkCAwEAAaNDMEEwDwYDVR0TAQH/BAUwAwEB/zAPBgNV
-HQ8BAf8EBQMDBwQAMB0GA1UdDgQWBBTJmh5kGpw4GOpTX6URYj4QgiRl2DANBgkq
-hkiG9w0BAQsFAAOCATEAKGdKt1fZOm9mlLmzsKyVT3+9LgeFO2dekmbWM2f9laAk
-v5JnU3JbVzgvvRKnsxRq8MjDrcBppeUyImHjeg52cEKhJ2xr3tJBNrA6j6+6K27P
-4C2Ny9vWb7C90KGSTBx7fn3vA53n/mWOjNgtXdpxKpBHsRJVQjB7rvQojvGrFYyA
-vjpED/I7MVsZmpuQq2RF/30+wN9g7fn2iXreOQ0kZQjfhuo5588/HmIhMU+e6/pP
-7gyd/8F/GHfCSS14l/3BvL5xBsyvci6aZ4ZAOtweYgoGRHCace8RRr4aqLWNIHZf
-7/UmE3m6TiSU3yheENVZjeTsypAgYOboOh+75vg6f0S592nupAywzW0zt/MjHVnI
-Q4sThawl8bbY3JrUUcqeFUWv7Qya0DQ7cjRamrAE9Q==
------END CERTIFICATE-----
-`
+	priv, err := rsa.GenerateKey(rand.Reader, rsaBits)
+
+	notBefore := time.Now()
+	notAfter := notBefore.Add(time.Hour)
+
+	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
+	if err != nil {
+		panic(fmt.Sprintf("failed to generate serial number: %s", err))
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			Organization: []string{"Acme Co"},
+		},
+		NotBefore: notBefore,
+		NotAfter:  notAfter,
+
+		KeyUsage: x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageClientAuth,
+			x509.ExtKeyUsageServerAuth,
+		},
+		BasicConstraintsValid: true,
+	}
+
+	template.DNSNames = append(template.DNSNames, host)
+	template.IsCA = true
+	template.KeyUsage |= x509.KeyUsageCertSign
+
+	derBytes, err := x509.CreateCertificate(
+		rand.Reader, &template, &template, publicKey(priv), priv)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to create certificate: %s", err))
+	}
+
+	var certOut bytes.Buffer
+	pem.Encode(&certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	cert = string(certOut.Bytes())
+
+	var keyOut bytes.Buffer
+	pem.Encode(&keyOut, pemBlockForKey(priv))
+	key = string(keyOut.Bytes())
+
+	return
+}
+
+var (
+	testClientCert string
+	testClientKey  string
+	testServerCert string
+	testServerKey  string
+)
+
+func init() {
+	testClientKey, testClientCert = genTestCertificate()
+	testServerKey, testServerCert = genTestCertificate()
+}
 
 const testTransactionLog = `
 H4sIAFDzFFcCA7y9cUyk93nv+7LLLi/MMLwzDMwAAwwYa7GW+mzP3dpTdW899sXH+CzXohFVNycr
