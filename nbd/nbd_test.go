@@ -4,7 +4,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
-	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -39,7 +38,7 @@ servers:
   tls:
     keyfile: {{.TempDir}}/server-key.pem
     certfile: {{.TempDir}}/server-cert.pem
-    cacertfile: {{.TempDir}}/ca-cert.pem
+    cacertfile: {{.TempDir}}/client-cert.pem
     servername: localhost
     clientauth: requireverify
 {{end}}
@@ -98,9 +97,6 @@ func StartNbd(t *testing.T, tc TestConfig) *NbdInstance {
 	}
 	if err := ioutil.WriteFile(path.Join(ni.TempDir, "client-cert.pem"), []byte(testClientCert), 0644); err != nil {
 		t.Fatalf("Could not write client key")
-	}
-	if err := ioutil.WriteFile(path.Join(ni.TempDir, "ca-cert.pem"), []byte(testCaCert), 0644); err != nil {
-		t.Fatalf("Could not write ca cert")
 	}
 
 	confFile := path.Join(ni.TempDir, "gonbdserver.conf")
@@ -163,27 +159,30 @@ func (ni *NbdInstance) Close() {
 func (ni *NbdInstance) getTlsConfig(t *testing.T) (*tls.Config, error) {
 	keyFile := path.Join(ni.TempDir, "client-key.pem")
 	certFile := path.Join(ni.TempDir, "client-cert.pem")
-	caCertFile := path.Join(ni.TempDir, "ca-cert.pem")
+	caFile := path.Join(ni.TempDir, "server-cert.pem")
 
+	// Load client cert
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return nil, err
 	}
 
-	clientCAs := x509.NewCertPool()
-	clientCAbytes, err := ioutil.ReadFile(caCertFile)
+	// Load CA cert
+	caCert, err := ioutil.ReadFile(caFile)
 	if err != nil {
 		return nil, err
 	}
-	if ok := clientCAs.AppendCertsFromPEM(clientCAbytes); !ok {
-		return nil, errors.New("Could not append CA certficates from PEM file")
-	}
+	caCertPool := x509.NewCertPool()
+	caCertPool.AppendCertsFromPEM(caCert)
 
-	return &tls.Config{
+	// Setup HTTPS client
+	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
+		RootCAs:      caCertPool,
 		ServerName:   "localhost",
-		RootCAs:      clientCAs,
-	}, nil
+	}
+	tlsConfig.BuildNameToCertificate()
+	return tlsConfig, nil
 }
 
 func (ni *NbdInstance) Connect(t *testing.T) error {
@@ -249,19 +248,21 @@ func (ni *NbdInstance) Connect(t *testing.T) error {
 			return fmt.Errorf("Tls option reply had bogus length")
 		}
 
-		if tlsConfig, err := ni.getTlsConfig(t); err != nil {
+		tlsConfig, err := ni.getTlsConfig(t)
+		if err != nil {
 			return fmt.Errorf("Could not get TLS config: %v", err)
-		} else {
-			tls := tls.Client(ni.conn, tlsConfig)
-			ni.tlsConn = tls
-			ni.conn = tls
-			ni.plainConn.SetDeadline(time.Time{})
-			ni.conn.SetDeadline(time.Now().Add(time.Second))
+		}
 
-			// explicitly handshake so we get an error here if there is an issue
-			if err := tls.Handshake(); err != nil {
-				return fmt.Errorf("TLS handshake failed: %s", err)
-			}
+		tls := tls.Client(ni.conn, tlsConfig)
+		ni.tlsConn = tls
+		ni.conn = tls
+		ni.plainConn.SetDeadline(time.Time{})
+		ni.conn.SetDeadline(time.Now().Add(time.Second))
+
+		// explicitly handshake so we get an error here if there is an issue
+		if err := tls.Handshake(); err != nil {
+			fmt.Println("oops", err)
+			return fmt.Errorf("TLS handshake failed: %s", err)
 		}
 	}
 
