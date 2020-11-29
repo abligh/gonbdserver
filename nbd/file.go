@@ -1,8 +1,10 @@
 package nbd
 
 import (
-	"golang.org/x/net/context"
+	"io"
 	"os"
+
+	"golang.org/x/net/context"
 )
 
 // FileBackend implements Backend
@@ -79,9 +81,20 @@ func NewFileBackend(ctx context.Context, ec *ExportConfig) (Backend, error) {
 		file.Close()
 		return nil, err
 	}
+	var size uint64
+	switch {
+	case stat.Mode().IsRegular():
+		size = uint64(stat.Size())
+	case stat.Mode()&os.ModeDevice != 0:
+		ds, err := file.Seek(0, io.SeekEnd)
+		if err != nil {
+			return nil, err
+		}
+		size = uint64(ds)
+	}
 	return &FileBackend{
 		file: file,
-		size: uint64(stat.Size()),
+		size: size,
 	}, nil
 }
 
